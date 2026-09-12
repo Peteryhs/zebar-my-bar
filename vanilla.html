@@ -141,6 +141,10 @@
             PANEL_NAMES.join(','),
             '-Owner',
             monitor.owner,
+            // So the guard can tell a click on the bar from a click somewhere
+            // else. Clicks on the bar are handled here, and only here.
+            '-BarMatch',
+            zebar.currentWidget().name,
           ]);
 
           guard.onStdout(line => {
@@ -245,19 +249,8 @@
       async function toggleWidget(name) {
         const state = panels.get(name);
         const wasOpen = state.open;
-        const anyOpen = [...panels.values()].some(one => one.open);
 
-        panels.forEach(one => {
-          one.open = false;
-        });
-
-        if (anyOpen) {
-          if (panelGuard) {
-            panelGuard.write('close all\n');
-          } else {
-            await closeWidget(PANEL_NAMES.join(','));
-          }
-        }
+        closeAllPanels();
 
         if (wasOpen) return;
 
@@ -268,6 +261,35 @@
           packId: zebar.currentWidget().packId,
         });
       }
+
+      function closeAllPanels() {
+        if (![...panels.values()].some(one => one.open)) return;
+
+        panels.forEach(one => {
+          one.open = false;
+        });
+
+        if (panelGuard) {
+          panelGuard.write('close all\n');
+        } else {
+          closeWidget(PANEL_NAMES.join(','));
+        }
+      }
+
+      /*
+       * The guard no longer dismisses a panel when the click landed on the bar,
+       * so the bar has to do it: a click on a part of the bar that does nothing
+       * (the clock, the gaps between tiles) still closes whatever is open, the
+       * way it did when the guard treated the bar as just another elsewhere.
+       *
+       * Tiles are excluded because their own handler decides: toggleWidget knows
+       * whether that tile's panel is the one already open.
+       */
+      window.addEventListener('mousedown', event => {
+        if (event.target.closest('.clickable')) return;
+
+        closeAllPanels();
+      });
 
       // Start the guard now instead of on the first click, so even the first
       // panel is watched from the moment it appears.

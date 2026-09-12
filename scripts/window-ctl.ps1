@@ -34,6 +34,7 @@ param(
   [Parameter(Mandatory = $true)][ValidateSet('close', 'watch', 'guard')][string]$Action,
   [Parameter(Mandatory = $true)][string]$Match,
   [string]$Owner = 'default',
+  [string]$BarMatch = '',
   [int]$TickMs = 100,
   [int]$ScanMs = 300,
   [int]$FindTimeoutMs = 8000,
@@ -82,6 +83,12 @@ $matchNames = @($Match -split ',' |
   ForEach-Object { $_.Trim() } |
   Where-Object { $_ -ne '' })
 
+# The bar's own window, if the caller named it. A click on the bar is not a
+# dismissal: the bar decides what a click on the bar means.
+$barNames = @($BarMatch -split ',' |
+  ForEach-Object { $_.Trim() } |
+  Where-Object { $_ -ne '' })
+
 function Write-Trace([string]$message) {
   try {
     Add-Content -Path $logPath -Value (
@@ -101,8 +108,12 @@ function Write-Event([string]$message) {
   }
 }
 
-function Get-TargetWindows {
+function Get-WindowsMatching([string[]]$names) {
   $found = New-Object System.Collections.ArrayList
+
+  if ($names.Count -eq 0) {
+    return $found
+  }
 
   $callback = [ZebarWin.Native+EnumWindowsProc]{
     param($hWnd, $lParam)
@@ -117,7 +128,7 @@ function Get-TargetWindows {
 
     $matched = $false
 
-    foreach ($name in $matchNames) {
+    foreach ($name in $names) {
       if ($titleText -like "*$name*") {
         $matched = $true
         break
@@ -143,6 +154,40 @@ function Get-TargetWindows {
 
   [void][ZebarWin.Native]::EnumWindows($callback, [System.IntPtr]::Zero)
   return $found
+}
+
+function Get-TargetWindows {
+  return Get-WindowsMatching $matchNames
+}
+
+function Get-BarRects {
+  $rects = New-Object System.Collections.ArrayList
+
+  foreach ($handle in (Get-WindowsMatching $barNames)) {
+    $rect = New-Object ZebarWin.Native+RECT
+
+    if ([ZebarWin.Native]::GetWindowRect([System.IntPtr]$handle, [ref]$rect)) {
+      [void]$rects.Add($rect)
+    }
+  }
+
+  return $rects
+}
+
+function Test-PointerOverBar($rects) {
+  if ($rects.Count -eq 0) { return $false }
+
+  $point = New-Object ZebarWin.Native+POINT
+  [void][ZebarWin.Native]::GetCursorPos([ref]$point)
+
+  foreach ($rect in $rects) {
+    if ($point.X -ge $rect.Left -and $point.X -lt $rect.Right -and
+        $point.Y -ge $rect.Top -and $point.Y -lt $rect.Bottom) {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Get-WindowName($handle) {
@@ -206,14 +251,18 @@ function Close-Window([int64]$handle) {
 
 function Test-ClickedSinceLastCheck {
   # Bit 0x0001 means "pressed since the previous call", so a click that lands
-  # between two polls is still caught.
+  # between two polls is still caught. Every button is read every time, not just
+  # up to the first hit: returning early leaves the others' bits set, and a stale
+  # bit then reads as a click on some later poll.
+  $pressed = $false
+
   foreach ($virtualKey in 0x01, 0x02, 0x04) {
     if (([ZebarWin.Native]::GetAsyncKeyState($virtualKey) -band 0x0001) -ne 0) {
-      return $true
+      $pressed = $true
     }
   }
 
-  return $false
+  return $pressed
 }
 
 function Test-PointerInsideWindow([int64]$handle) {
@@ -270,6 +319,7 @@ if ($Action -eq 'guard') {
   # A closed window can linger for a moment, so remember what we just closed to
   # avoid attaching to it again on the next scan.
   $recentlyClosed = @{}
+  $barRects = Get-BarRects
   $tick = 0
   $lifeDeadline = (Get-Date).AddMinutes($MaxLifetimeMinutes)
 
@@ -350,7 +400,23 @@ if ($Action -eq 'guard') {
         $reason = $null
 
         if ($clicked -and -not (Test-PointerInsideWindow $entry.Handle)) {
-          $reason = 'click-outside'
+          # A click on the bar is not a dismissal, even though the bar is
+          # outside this window.
+          #
+          # It used to be, and it fought the bar for the same click: the guard
+          # closed the panel and reported it closed, the bar read that report and
+          # so believed nothing was open, and the click it was handling therefore
+          # opened the panel again. The panel shut and reopened inside a couple of
+          # hundred milliseconds, which looks exactly like a click that did
+          # nothing, and closing anything took two of them.
+          #
+          # One owner per click: the bar decides what a click on the bar means and
+          # says so on the guard's stdin. Everywhere else is the guard's.
+          if (Test-PointerOverBar $barRects) {
+            Write-Trace ('guard ignored click name={0} reason=on-bar' -f $entry.Name)
+          } else {
+            $reason = 'click-outside'
+          }
         }
 
         # Click outside is the only dismissal, deliberately. Focus based rules
@@ -373,6 +439,10 @@ if ($Action -eq 'guard') {
     # expensive part.
     if (($now - $lastScan).TotalMilliseconds -ge $ScanMs) {
       $lastScan = $now
+
+      # Re-read on the same cadence as the panel scan: the bar is docked and does
+      # not move, but it is recreated on every reload of the pack.
+      $barRects = Get-BarRects
 
       # Forget closures older than a few seconds.
       foreach ($key in @($recentlyClosed.Keys)) {
