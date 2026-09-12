@@ -593,8 +593,8 @@
           "anchor": "top_center",
           "offsetX": "0px",
           "offsetY": "48px",
-          "width": "660px",
-          "height": "460px",
+          "width": "640px",
+          "height": "560px",
           "monitorSelection": {
             "type": "primary"
           },
@@ -609,8 +609,8 @@
           "anchor": "top_center",
           "offsetX": "0px",
           "offsetY": "48px",
-          "width": "660px",
-          "height": "460px",
+          "width": "640px",
+          "height": "560px",
           "monitorSelection": {
             "type": "secondary"
           },

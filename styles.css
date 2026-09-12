@@ -848,26 +848,27 @@ body.is-floating #root {
  * afternoon, and the gaps between blocks are the free time.
  */
 /*
- * The day as a timeline.
+ * The day as a timeline, running down.
  *
- * Time runs left to right at a fixed scale, so the distance between two things is
- * how long apart they are, and a gap is genuinely empty. Anything overlapping is
- * stacked into lanes instead of being reordered, because two things at two o'clock
- * are two things at two o'clock. A line marks now and moves across as the day goes.
+ * Down rather than across, because down is where a narrow column has room. An hour
+ * is a comfortable row instead of a cramped column, and the thing that made the
+ * horizontal version awkward — width — is now what overlapping events want: two at
+ * once are two columns side by side rather than two rows stacked.
  *
- * Fixed scale rather than fitting the day to the width: an hour has to be wide
- * enough to write in, so a long day scrolls rather than compressing to the point
- * where nothing can be read.
+ * Hours are a fixed height for the same reason they were a fixed width: distance
+ * has to mean duration, so a long day scrolls rather than compressing.
  */
 .cal-timeline {
-  overflow-x: auto;
-  overflow-y: hidden;
+  position: relative;
+  max-height: 340px;
+  overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: rgb(255 255 255 / 20%) transparent;
 }
 
 .cal-timeline::-webkit-scrollbar {
-  height: 5px;
+  width: 5px;
 }
 
 .cal-timeline::-webkit-scrollbar-thumb {
@@ -879,29 +880,35 @@ body.is-floating #root {
   position: relative;
 }
 
-/* Hour labels along the top, and the lines they belong to below. */
+/* Each hour: a rule across the day with its label in the gutter on the left. */
+.cal-hour {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px solid rgb(255 255 255 / 7%);
+}
+
 .cal-hour-label {
   position: absolute;
-  top: 0;
+  top: -6px;
+  left: 0;
+  width: 34px;
+  text-align: right;
   font-size: 9px;
   letter-spacing: 0.04em;
   opacity: 0.4;
   font-variant-numeric: tabular-nums;
-  transform: translateX(-50%);
   white-space: nowrap;
 }
 
+/* Everything to the right of the gutter, where the events live. */
 .cal-lanes {
-  position: relative;
-  margin-top: 14px;
-}
-
-.cal-hour-line {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
-  background: rgb(255 255 255 / 7%);
+  left: 42px;
+  right: 0;
 }
 
 /* Plain blocks: a fill, a corner radius, nothing on the edges. */
@@ -912,10 +919,20 @@ body.is-floating #root {
   flex-direction: column;
   justify-content: center;
   gap: 1px;
-  padding: 4px 7px;
+  padding: 3px 7px;
   border-radius: 5px;
   background: rgb(255 255 255 / 10%);
   overflow: hidden;
+}
+
+/* Too short to carry two lines, so it carries the one that matters. */
+.cal-block.is-short {
+  padding: 1px 7px;
+  justify-content: center;
+}
+
+.cal-block.is-short .cal-block-time {
+  display: none;
 }
 
 .cal-block-time {
@@ -951,13 +968,14 @@ body.is-floating #root {
   color: #fff;
 }
 
-/* Now. Drawn over the blocks, which is the one thing that should sit on top. */
+/* Now, sweeping down the day. Over the blocks, which is the one thing that should
+   sit on top of them. */
 .cal-now {
   position: absolute;
-  top: -4px;
-  bottom: -2px;
-  width: 2px;
-  margin-left: -1px;
+  left: 42px;
+  right: 0;
+  height: 2px;
+  margin-top: -1px;
   background: #ff7a7a;
   pointer-events: none;
 }
@@ -966,11 +984,24 @@ body.is-floating #root {
   content: '';
   position: absolute;
   top: -2px;
-  left: -2px;
+  left: -3px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: #ff7a7a;
+}
+
+.cal-now-label {
+  position: absolute;
+  top: -6px;
+  left: -42px;
+  width: 34px;
+  text-align: right;
+  font-size: 9px;
+  font-weight: 600;
+  color: #ff7a7a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* All day events have no place on a time axis, so they sit above it. */

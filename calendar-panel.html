@@ -218,39 +218,70 @@
         el.days.innerHTML = cells.join('');
       }
 
-      // How wide an hour is. Fixed, so distance means duration; a long day scrolls
+      // How tall an hour is. Fixed, so distance means duration; a long day scrolls
       // rather than compressing until nothing can be read.
-      const HOUR_PX = 74;
-      const LANE_HEIGHT = 32;
-      const LANE_GAP = 4;
-      const MIN_BLOCK_PX = 26;
+      const HOUR_HEIGHT = 48;
+      const MIN_BLOCK_PX = 15;
+      // Below this a block cannot carry both its time and its title, so it carries
+      // the title.
+      const SHORT_BLOCK_PX = 30;
+      const COLUMN_GAP_PC = 2;
 
       /*
-       * Which lane each event belongs in.
+       * Groups of events that overlap, directly or through a chain of others, and
+       * the columns within each group.
        *
-       * Everything that overlaps has to be visible at once, so an event goes in the
-       * first lane that is free by the time it starts, and a new lane is opened when
-       * none is. Events in sequence therefore share a lane and read as one line
-       * across the day; events at the same time stack.
+       * Scoped to the group on purpose. Assigning columns across the whole day would
+       * mean one double booking at nine o'clock left every other event that day at
+       * half width for no reason. Within a group an event takes the first column free
+       * by the time it starts, so a run of back to back meetings shares one column
+       * and reads as a single line down the day.
        */
-      function assignLanes(timed) {
-        const laneEnds = [];
+      function assignColumns(timed) {
         const placed = [];
+        let group = [];
+        let groupEnd = null;
 
-        for (const event of timed) {
-          let lane = laneEnds.findIndex(end => end <= event.start);
+        const flush = () => {
+          if (group.length === 0) return;
 
-          if (lane === -1) {
-            laneEnds.push(event.end);
-            lane = laneEnds.length - 1;
-          } else {
-            laneEnds[lane] = event.end;
+          const columnEnds = [];
+
+          for (const event of group) {
+            let column = columnEnds.findIndex(end => end <= event.start);
+
+            if (column === -1) {
+              columnEnds.push(event.end);
+              column = columnEnds.length - 1;
+            } else {
+              columnEnds[column] = event.end;
+            }
+
+            placed.push({ event, column, columns: 0, groupIndex: placed.length });
           }
 
-          placed.push({ event, lane });
+          // Every event in the group is divided by the same number of columns, so
+          // they line up with each other.
+          const width = Math.max(1, columnEnds.length);
+
+          for (let i = placed.length - group.length; i < placed.length; i++) {
+            placed[i].columns = width;
+          }
+
+          group = [];
+          groupEnd = null;
+        };
+
+        for (const event of timed) {
+          if (groupEnd !== null && event.start >= groupEnd) flush();
+
+          group.push(event);
+          groupEnd = groupEnd === null || event.end > groupEnd ? event.end : groupEnd;
         }
 
-        return { placed, laneCount: Math.max(1, laneEnds.length) };
+        flush();
+
+        return placed;
       }
 
       // Clamped to the day being shown, so something running past midnight does not
@@ -315,40 +346,39 @@
         from = new Date(from.getFullYear(), from.getMonth(), from.getDate(), from.getHours());
         to = new Date(Math.ceil(to.getTime() / 3600000) * 3600000);
 
-        // Never narrower than three hours: a single half hour meeting on an axis of
+        // Never shorter than three hours: a single half hour meeting on an axis of
         // its own tells you nothing about the shape of the day.
         if ((to - from) < 3 * 3600000) to = new Date(from.getTime() + 3 * 3600000);
 
         const spanMs = to - from;
-        const trackWidth = Math.round((spanMs / 3600000) * HOUR_PX);
-        const xOf = when => Math.round(((when - from) / spanMs) * trackWidth);
-
-        const { placed, laneCount } = assignLanes(timed);
-        const lanesHeight = laneCount * LANE_HEIGHT + (laneCount - 1) * LANE_GAP;
+        const trackHeight = Math.round((spanMs / 3600000) * HOUR_HEIGHT);
+        const yOf = when => Math.round(((when - from) / spanMs) * trackHeight);
 
         const hours = [];
 
-        for (let at = new Date(from); at < to; at = new Date(at.getTime() + 3600000)) {
-          const x = xOf(at);
-
+        for (let at = new Date(from); at <= to; at = new Date(at.getTime() + 3600000)) {
           hours.push(
-            '<div class="cal-hour-label" style="left: ' + x + 'px">' +
+            '<div class="cal-hour" style="top: ' + yOf(at) + 'px">' +
+              '<span class="cal-hour-label">' +
               at.toLocaleTimeString(undefined, { hour: 'numeric' }) +
-              '</div>',
+              '</span></div>',
           );
-          hours.push('<div class="cal-hour-line" style="left: ' + x + 'px"></div>');
         }
 
-        const blocks = placed.map(({ event, lane }) => {
+        const blocks = assignColumns(timed).map(({ event, column, columns }) => {
           const bounds = clampToDay(event, dayStart, dayEnd);
-          const left = xOf(bounds.start);
-          const width = Math.max(MIN_BLOCK_PX, xOf(bounds.end) - left);
+          const top = yOf(bounds.start);
+          const height = Math.max(MIN_BLOCK_PX, yOf(bounds.end) - top);
+          const width = 100 / columns;
           const when = timeText(event.start) + ' – ' + timeText(event.end);
+          const classes =
+            'cal-block is-' + stateOf(event, now) +
+            (height < SHORT_BLOCK_PX ? ' is-short' : '');
 
           return (
-            '<div class="cal-block is-' + stateOf(event, now) + '" style="left: ' + left +
-            'px; width: ' + width + 'px; top: ' + (lane * (LANE_HEIGHT + LANE_GAP)) +
-            'px; height: ' + LANE_HEIGHT + 'px" title="' +
+            '<div class="' + classes + '" style="top: ' + top + 'px; height: ' + height +
+            'px; left: ' + (column * width) + '%; width: calc(' + width + '% - ' +
+            COLUMN_GAP_PC + 'px)" title="' +
             escapeHtml(when + '  ·  ' + event.summary) + '">' +
             '<span class="cal-block-time">' + escapeHtml(when) + '</span>' +
             '<span class="cal-block-title">' + escapeHtml(event.summary) + '</span>' +
@@ -357,18 +387,16 @@
         });
 
         const marker = isToday && now >= from && now <= to
-          ? '<div class="cal-now" style="left: ' + xOf(now) + 'px"></div>'
+          ? '<div class="cal-now" style="top: ' + yOf(now) + 'px">' +
+            '<span class="cal-now-label">' + timeText(now) + '</span></div>'
           : '';
 
         el.timeline.innerHTML =
-          '<div class="cal-track" style="width: ' + trackWidth + 'px; height: ' +
-          (lanesHeight + 14) + 'px">' +
-          hours.filter(one => one.includes('hour-label')).join('') +
-          '<div class="cal-lanes" style="height: ' + lanesHeight + 'px">' +
-          hours.filter(one => one.includes('hour-line')).join('') +
-          blocks.join('') +
+          '<div class="cal-track" style="height: ' + trackHeight + 'px">' +
+          hours.join('') +
+          '<div class="cal-lanes">' + blocks.join('') + '</div>' +
           marker +
-          '</div></div>';
+          '</div>';
 
         /*
          * Bring the interesting part into view once per day shown, not on every
@@ -379,11 +407,10 @@
 
         if (scrolledForDay !== key) {
           scrolledForDay = key;
-          const focus = isToday ? xOf(now) : xOf(timed[0].start);
-          el.timeline.scrollLeft = Math.max(0, focus - 90);
+          const focus = isToday ? yOf(now) : yOf(timed[0].start);
+          el.timeline.scrollTop = Math.max(0, focus - 70);
         }
       }
-
       /*
        * The next event about to start, if it is close enough to be worth saying so.
        *
