@@ -847,32 +847,79 @@ body.is-floating #root {
  * room. Width follows duration, so a half hour reads as narrower than an
  * afternoon, and the gaps between blocks are the free time.
  */
-.cal-blocks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-content: flex-start;
+/*
+ * The day as a timeline.
+ *
+ * Time runs left to right at a fixed scale, so the distance between two things is
+ * how long apart they are, and a gap is genuinely empty. Anything overlapping is
+ * stacked into lanes instead of being reordered, because two things at two o'clock
+ * are two things at two o'clock. A line marks now and moves across as the day goes.
+ *
+ * Fixed scale rather than fitting the day to the width: an hour has to be wide
+ * enough to write in, so a long day scrolls rather than compressing to the point
+ * where nothing can be read.
+ */
+.cal-timeline {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 20%) transparent;
 }
 
-.cal-blocks-empty {
-  font-size: 12px;
-  opacity: 0.45;
+.cal-timeline::-webkit-scrollbar {
+  height: 5px;
 }
 
+.cal-timeline::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 18%);
+  border-radius: 3px;
+}
+
+.cal-track {
+  position: relative;
+}
+
+/* Hour labels along the top, and the lines they belong to below. */
+.cal-hour-label {
+  position: absolute;
+  top: 0;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  opacity: 0.4;
+  font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.cal-lanes {
+  position: relative;
+  margin-top: 14px;
+}
+
+.cal-hour-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgb(255 255 255 / 7%);
+}
+
+/* Plain blocks: a fill, a corner radius, nothing on the edges. */
 .cal-block {
+  position: absolute;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border-left: 2px solid currentColor;
-  background: rgb(255 255 255 / 7%);
+  justify-content: center;
+  gap: 1px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 10%);
   overflow: hidden;
 }
 
 .cal-block-time {
-  font-size: 10px;
+  font-size: 9px;
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -881,7 +928,7 @@ body.is-floating #root {
 }
 
 .cal-block-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -891,20 +938,72 @@ body.is-floating #root {
 /* Over and done with: still there, but not asking for attention. */
 .cal-block.is-past {
   color: rgb(255 255 255 / 40%);
-  background: rgb(255 255 255 / 4%);
+  background: rgb(255 255 255 / 5%);
 }
 
 /* Happening now, the one thing on the panel worth the accent. */
 .cal-block.is-now {
   color: #fff;
-  background: rgb(75 115 255 / 45%);
-  border-left-color: #8fb4ff;
+  background: rgb(75 115 255 / 50%);
 }
 
 .cal-block.is-future {
   color: #fff;
 }
 
+/* Now. Drawn over the blocks, which is the one thing that should sit on top. */
+.cal-now {
+  position: absolute;
+  top: -4px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: #ff7a7a;
+  pointer-events: none;
+}
+
+.cal-now::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ff7a7a;
+}
+
+/* All day events have no place on a time axis, so they sit above it. */
+.cal-allday {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cal-allday-item {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 10%);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-allday-item.is-past {
+  color: rgb(255 255 255 / 40%);
+  background: rgb(255 255 255 / 5%);
+}
+
+.cal-allday-item.is-now {
+  background: rgb(75 115 255 / 50%);
+}
+
+.cal-blocks-empty {
+  font-size: 12px;
+  opacity: 0.45;
+}
 /*
  * The warning about something about to start. Sits above the day, and only appears
  * inside the last quarter of an hour before an event.

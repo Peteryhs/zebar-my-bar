@@ -43,7 +43,8 @@
         <div class="cal-day-view">
           <div class="cal-upnext" id="upnext" hidden></div>
           <div class="cal-day-title" id="day-title"></div>
-          <div class="cal-blocks" id="blocks"></div>
+          <div class="cal-allday" id="allday"></div>
+          <div class="cal-timeline" id="timeline"></div>
         </div>
       </div>
     </div>
@@ -68,7 +69,8 @@
         weekdays: document.getElementById('weekdays'),
         days: document.getElementById('days'),
         dayTitle: document.getElementById('day-title'),
-        blocks: document.getElementById('blocks'),
+        allday: document.getElementById('allday'),
+        timeline: document.getElementById('timeline'),
         upnext: document.getElementById('upnext'),
       };
 
@@ -216,19 +218,58 @@
         el.days.innerHTML = cells.join('');
       }
 
+      // How wide an hour is. Fixed, so distance means duration; a long day scrolls
+      // rather than compressing until nothing can be read.
+      const HOUR_PX = 74;
+      const LANE_HEIGHT = 32;
+      const LANE_GAP = 4;
+      const MIN_BLOCK_PX = 26;
+
       /*
-       * The selected day as blocks along a line rather than a list.
+       * Which lane each event belongs in.
        *
-       * A block's width follows how long the event runs, so a half hour reads as
-       * narrower than an afternoon, but clamped: below about 70px a title is not
-       * worth printing, and past a point extra width says nothing. Gaps between
-       * blocks are free time.
+       * Everything that overlaps has to be visible at once, so an event goes in the
+       * first lane that is free by the time it starts, and a new lane is opened when
+       * none is. Events in sequence therefore share a lane and read as one line
+       * across the day; events at the same time stack.
        */
+      function assignLanes(timed) {
+        const laneEnds = [];
+        const placed = [];
+
+        for (const event of timed) {
+          let lane = laneEnds.findIndex(end => end <= event.start);
+
+          if (lane === -1) {
+            laneEnds.push(event.end);
+            lane = laneEnds.length - 1;
+          } else {
+            laneEnds[lane] = event.end;
+          }
+
+          placed.push({ event, lane });
+        }
+
+        return { placed, laneCount: Math.max(1, laneEnds.length) };
+      }
+
+      // Clamped to the day being shown, so something running past midnight does not
+      // drag the axis with it.
+      function clampToDay(event, dayStart, dayEnd) {
+        return {
+          start: event.start < dayStart ? dayStart : event.start,
+          end: event.end > dayEnd ? dayEnd : event.end,
+        };
+      }
+
+      let scrolledForDay = null;
+
       function renderDay() {
         const now = new Date();
         const forDay = eventsByDay().get(dayKey(selected)) || [];
+        const isToday = sameDay(selected, today);
 
-        el.dayTitle.textContent = sameDay(selected, today)
+        el.dayTitle.textContent = isToday
           ? 'Today'
           : selected.toLocaleDateString(undefined, {
               weekday: 'long',
@@ -236,32 +277,111 @@
               month: 'long',
             });
 
-        if (forDay.length === 0) {
-          el.blocks.innerHTML = '<div class="cal-blocks-empty">Nothing scheduled</div>';
+        // All day events have no place on a time axis, so they sit above it.
+        const allDay = forDay.filter(event => event.allDay);
+
+        el.allday.innerHTML = allDay
+          .map(
+            event =>
+              '<div class="cal-allday-item is-' + stateOf(event, now) + '" title="' +
+              escapeHtml(event.summary) + '">' + escapeHtml(event.summary) + '</div>',
+          )
+          .join('');
+
+        const timed = forDay
+          .filter(event => !event.allDay)
+          .sort((a, b) => a.start - b.start);
+
+        if (timed.length === 0) {
+          el.timeline.innerHTML = allDay.length
+            ? ''
+            : '<div class="cal-blocks-empty">Nothing scheduled</div>';
           return;
         }
 
-        el.blocks.innerHTML = forDay
-          .map(event => {
-            const minutes = event.allDay
-              ? 240
-              : Math.max(15, Math.round((event.end - event.start) / 60000));
-            const width = Math.min(190, Math.max(78, Math.round(minutes * 1.6)));
-            const state = stateOf(event, now);
+        const dayStart = startOfDay(selected);
+        const dayEnd = new Date(dayStart.getTime() + 24 * 3600 * 1000);
 
-            const when = event.allDay
-              ? 'all day'
-              : timeText(event.start) + ' – ' + timeText(event.end);
+        // The axis covers the day's events, and the current time when that is today,
+        // so the marker is always somewhere on it. Whole hours, for labels that read.
+        let from = new Date(Math.min(...timed.map(event => event.start)));
+        let to = new Date(Math.max(...timed.map(event => event.end)));
 
-            return (
-              '<div class="cal-block is-' + state + '" style="width: ' + width + 'px" ' +
-              'title="' + escapeHtml(when + '  ·  ' + event.summary) + '">' +
-              '<span class="cal-block-time">' + escapeHtml(when) + '</span>' +
-              '<span class="cal-block-title">' + escapeHtml(event.summary) + '</span>' +
-              '</div>'
-            );
-          })
-          .join('');
+        if (isToday) {
+          if (now < from) from = now;
+          if (now > to) to = now;
+        }
+
+        from = new Date(from.getFullYear(), from.getMonth(), from.getDate(), from.getHours());
+        to = new Date(Math.ceil(to.getTime() / 3600000) * 3600000);
+
+        // Never narrower than three hours: a single half hour meeting on an axis of
+        // its own tells you nothing about the shape of the day.
+        if ((to - from) < 3 * 3600000) to = new Date(from.getTime() + 3 * 3600000);
+
+        const spanMs = to - from;
+        const trackWidth = Math.round((spanMs / 3600000) * HOUR_PX);
+        const xOf = when => Math.round(((when - from) / spanMs) * trackWidth);
+
+        const { placed, laneCount } = assignLanes(timed);
+        const lanesHeight = laneCount * LANE_HEIGHT + (laneCount - 1) * LANE_GAP;
+
+        const hours = [];
+
+        for (let at = new Date(from); at < to; at = new Date(at.getTime() + 3600000)) {
+          const x = xOf(at);
+
+          hours.push(
+            '<div class="cal-hour-label" style="left: ' + x + 'px">' +
+              at.toLocaleTimeString(undefined, { hour: 'numeric' }) +
+              '</div>',
+          );
+          hours.push('<div class="cal-hour-line" style="left: ' + x + 'px"></div>');
+        }
+
+        const blocks = placed.map(({ event, lane }) => {
+          const bounds = clampToDay(event, dayStart, dayEnd);
+          const left = xOf(bounds.start);
+          const width = Math.max(MIN_BLOCK_PX, xOf(bounds.end) - left);
+          const when = timeText(event.start) + ' – ' + timeText(event.end);
+
+          return (
+            '<div class="cal-block is-' + stateOf(event, now) + '" style="left: ' + left +
+            'px; width: ' + width + 'px; top: ' + (lane * (LANE_HEIGHT + LANE_GAP)) +
+            'px; height: ' + LANE_HEIGHT + 'px" title="' +
+            escapeHtml(when + '  ·  ' + event.summary) + '">' +
+            '<span class="cal-block-time">' + escapeHtml(when) + '</span>' +
+            '<span class="cal-block-title">' + escapeHtml(event.summary) + '</span>' +
+            '</div>'
+          );
+        });
+
+        const marker = isToday && now >= from && now <= to
+          ? '<div class="cal-now" style="left: ' + xOf(now) + 'px"></div>'
+          : '';
+
+        el.timeline.innerHTML =
+          '<div class="cal-track" style="width: ' + trackWidth + 'px; height: ' +
+          (lanesHeight + 14) + 'px">' +
+          hours.filter(one => one.includes('hour-label')).join('') +
+          '<div class="cal-lanes" style="height: ' + lanesHeight + 'px">' +
+          hours.filter(one => one.includes('hour-line')).join('') +
+          blocks.join('') +
+          marker +
+          '</div></div>';
+
+        /*
+         * Bring the interesting part into view once per day shown, not on every
+         * redraw: the half minute tick would otherwise keep yanking the view back
+         * while it was being read.
+         */
+        const key = dayKey(selected);
+
+        if (scrolledForDay !== key) {
+          scrolledForDay = key;
+          const focus = isToday ? xOf(now) : xOf(timed[0].start);
+          el.timeline.scrollLeft = Math.max(0, focus - 90);
+        }
       }
 
       /*
