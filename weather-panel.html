@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+  </head>
+  <body class="panel-body">
+    <div class="panel weather-panel">
+      <div class="panel-header">
+        <i class="nf nf-weather-cloudy" id="header-icon"></i>
+        <span class="panel-title">Weather</span>
+        <span class="panel-place" id="place"></span>
+      </div>
+
+      <div class="weather-now">
+        <i class="nf weather-now-icon" id="now-icon"></i>
+
+        <span class="weather-now-temp" id="now-temp">--</span>
+
+        <div class="weather-now-meta">
+          <span id="now-feels">feels like --</span>
+          <span id="now-wind">wind --</span>
+          <span id="now-humidity">--% humidity</span>
+        </div>
+      </div>
+
+      <div class="panel-separator"></div>
+
+      <div class="forecast" id="forecast"></div>
+    </div>
+
+    <script type="module">
+      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+
+      const widget = zebar.currentWidget();
+
+
+
+      const el = {
+        headerIcon: document.getElementById('header-icon'),
+        nowIcon: document.getElementById('now-icon'),
+        nowTemp: document.getElementById('now-temp'),
+        nowFeels: document.getElementById('now-feels'),
+        nowWind: document.getElementById('now-wind'),
+        nowHumidity: document.getElementById('now-humidity'),
+        place: document.getElementById('place'),
+        forecast: document.getElementById('forecast'),
+      };
+
+      const weather = zebar.createProvider({
+        type: 'weather',
+        refreshInterval: 900000,
+      });
+      const ip = zebar.createProvider({ type: 'ip', refreshInterval: 3600000 });
+
+      let current = null;
+      let forecast = null;
+      let coords = null;
+
+      /* Monochrome glyphs only: these all come from the Nerdfonts weather set,
+         so they take the colour of the text around them. */
+      function iconFor(code, isDay) {
+        if (code === 0) {
+          return isDay ? 'nf-weather-day_sunny' : 'nf-weather-night_clear';
+        }
+        if (code === 1) {
+          return isDay
+            ? 'nf-weather-day_cloudy'
+            : 'nf-weather-night_alt_cloudy';
+        }
+        if (code === 2) {
+          return isDay
+            ? 'nf-weather-day_cloudy_high'
+            : 'nf-weather-night_alt_cloudy_high';
+        }
+        if (code === 3) return 'nf-weather-cloudy';
+        if (code === 45 || code === 48) return 'nf-weather-fog';
+        if (code >= 51 && code <= 57) return 'nf-weather-sprinkle';
+        if (code >= 61 && code <= 65) return 'nf-weather-rain';
+        if (code === 66 || code === 67) return 'nf-weather-sleet';
+        if (code >= 71 && code <= 77) return 'nf-weather-snow';
+        if (code >= 80 && code <= 82) return 'nf-weather-showers';
+        if (code === 85 || code === 86) return 'nf-weather-snow';
+        if (code >= 95) return 'nf-weather-thunderstorm';
+        return 'nf-weather-cloudy';
+      }
+
+      /* The weather provider only reports current conditions, so the daily
+         rows come straight from the same API it uses (Open-Meteo). The pack's
+         caching rules keep that response fresh for 15 minutes. */
+      async function loadForecast() {
+        if (!coords) return;
+
+        const url =
+          'https://api.open-meteo.com/v1/forecast' +
+          '?latitude=' + coords.latitude +
+          '&longitude=' + coords.longitude +
+          '&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,is_day,weather_code' +
+          '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+          '&timezone=auto&forecast_days=7';
+
+        try {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          forecast = await response.json();
+          render();
+        } catch (err) {
+          console.warn('Forecast fetch failed:', err);
+        }
+      }
+
+      ip.onOutput(output => {
+        if (!output || coords) return;
+
+        coords = {
+          latitude: output.approxLatitude,
+          longitude: output.approxLongitude,
+        };
+
+        el.place.textContent = output.approxCity || output.approxCountry || '';
+        loadForecast();
+      });
+
+      function dayLabel(isoDate) {
+        const date = new Date(isoDate + 'T12:00:00');
+
+        return date.toLocaleDateString(undefined, { weekday: 'short' });
+      }
+
+      function render() {
+        const daily = forecast && forecast.daily;
+        const now = (forecast && forecast.current) || null;
+
+        const nowTemp = now ? now.temperature_2m : current && current.celsiusTemp;
+        const nowCode = now ? now.weather_code : null;
+        const isDay = now
+          ? now.is_day === 1
+          : current
+            ? current.isDaytime
+            : true;
+
+        if (nowTemp !== null && nowTemp !== undefined) {
+          el.nowTemp.textContent = Math.round(nowTemp) + '°';
+        }
+
+        if (nowCode !== null) {
+          const icon = iconFor(nowCode, isDay);
+          el.nowIcon.className = 'nf weather-now-icon ' + icon;
+          el.headerIcon.className = 'nf ' + icon;
+        }
+
+        if (now) {
+          el.nowFeels.textContent = 'feels like ' + Math.round(now.apparent_temperature) + '°';
+          el.nowWind.textContent = 'wind ' + Math.round(now.wind_speed_10m) + ' km/h';
+          el.nowHumidity.textContent = now.relative_humidity_2m + '% humidity';
+        } else if (current) {
+          el.nowWind.textContent = 'wind ' + Math.round(current.windSpeed) + ' km/h';
+        }
+
+        if (!daily) {
+          el.forecast.innerHTML =
+            '<div class="forecast-note">forecast unavailable</div>';
+          return;
+        }
+
+        el.forecast.innerHTML = daily.time
+          .map((date, index) => {
+            const code = daily.weather_code[index];
+            const high = Math.round(daily.temperature_2m_max[index]);
+            const low = Math.round(daily.temperature_2m_min[index]);
+            const chance = daily.precipitation_probability_max[index];
+
+            return (
+              '<div class="forecast-row">' +
+              '<span class="forecast-day">' + dayLabel(date) + '</span>' +
+              '<i class="nf ' + iconFor(code, true) + '"></i>' +
+              '<span class="forecast-precip">' +
+              (chance === null || chance === undefined ? '' : chance + '%') +
+              '</span>' +
+              '<span class="forecast-range">' +
+              '<span class="forecast-high">' + high + '°</span>' +
+              '<span class="forecast-low">' + low + '°</span>' +
+              '</span>' +
+              '</div>'
+            );
+          })
+          .join('');
+      }
+
+      weather.onOutput(output => {
+        current = output;
+        render();
+      });
+
+      render();
+
+      /* Closing is done from outside, by the helper the bar starts when it
+         opens this panel (see window-ctl.ps1). Escape here is a bonus. */
+      // Animate out first, then close: the window is transparent, so a short
+      // fade and lift is visible before it disappears.
+      function close() {
+        const panel = document.querySelector('.panel');
+
+        if (!panel || panel.classList.contains('closing')) {
+          widget.close();
+          return;
+        }
+
+        panel.classList.add('closing');
+        setTimeout(() => widget.close(), 130);
+      }
+
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+      });
+    </script>
+  </body>
+</html>

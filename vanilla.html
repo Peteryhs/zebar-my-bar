@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Custom styles. -->
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+
+    <!-- Allows React to be run buildless via "text/babel" script below. -->
+    <script
+      src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"
+      integrity="sha256-aS0B0wnsaDByLfE16h4MDCP1fQFccysd1YWOcV+gbBo="
+      crossorigin="anonymous"
+    ></script>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+      import React, {
+        useState,
+        useEffect,
+      } from 'https://esm.sh/react@18?dev';
+      import { createRoot } from 'https://esm.sh/react-dom@18/client?dev';
+      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+
+      // Paths and titles shared by the watcher and the click handlers below.
+      const packDir = zebar
+        .currentWidget()
+        .htmlPath.replace(/[\\/][^\\/]*$/, '');
+      const windowCtlScript = `${packDir}\\scripts\\window-ctl.ps1`;
+
+      const providers = zebar.createProviderGroup({
+        cpu: { type: 'cpu' },
+        date: { type: 'date', formatting: 'EEE d MMM t' },
+        battery: { type: 'battery' },
+        memory: { type: 'memory' },
+        weather: { type: 'weather' },
+        media: { type: 'media' },
+        audio: { type: 'audio' },
+        disk: { type: 'disk', refreshInterval: 60000 },
+      });
+
+      /*
+       * Window state watcher.
+       *
+       * scripts/fg-state.ps1 prints "max" while the foreground window is
+       * maximized and "float" otherwise. While a window is maximized the bar
+       * fills the whole strip it is given; the rest of the time `is-floating`
+       * lifts it off the screen edge (see styles.css).
+       */
+      async function watchForegroundState() {
+        if (!navigator.userAgent.includes('Windows')) {
+          return;
+        }
+
+        const scriptPath = `${packDir}\\scripts\\fg-state.ps1`;
+
+        const watcher = await zebar.shellSpawn('powershell.exe', [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          scriptPath,
+        ]);
+
+        watcher.onStdout(line => {
+          const state = line.trim();
+
+          if (state === 'max' || state === 'float') {
+            document.body.classList.toggle(
+              'is-floating',
+              state === 'float',
+            );
+          }
+        });
+
+        watcher.onStderr(line => console.warn('fg-state:', line));
+
+        watcher.onExit(status => {
+          console.warn('fg-state watcher exited:', status);
+          document.body.classList.remove('is-floating');
+        });
+
+        window.addEventListener('beforeunload', () => watcher.kill());
+      }
+
+      watchForegroundState().catch(err =>
+        console.warn('fg-state watcher failed:', err),
+      );
+
+      /*
+       * Click interactions.
+       *
+       * Panels are other widgets of the same pack, opened with
+       * zebar.startWidgetPreset. Their lifetime is handled by one long lived
+       * helper (scripts/window-ctl.ps1 -Action guard): it watches every panel
+       * window and closes one as soon as it is dismissed, by a click outside it
+       * or by losing the foreground. One guard for all panels, started once,
+       * is what keeps opening and closing snappy: starting a PowerShell per
+       * click costs the better part of a second.
+       *
+       * The guard reports what it does on stdout ("open <name>", "closed
+       * <name>"), which is how this bar knows whether a panel is up. Clicking
+       * an item again just sends one line to a process that is already running.
+       */
+      const PANEL_NAMES = [
+        'battery-panel',
+        'system-panel',
+        'media-panel',
+        'controls-panel',
+        'storage-panel',
+        'windows-menu',
+        'weather-panel',
+      ];
+      const panels = new Map(PANEL_NAMES.map(name => [name, { open: false }]));
+
+      let panelGuard = null;
+      let guardStarting = null;
+
+      function startPanelGuard() {
+        if (guardStarting) return guardStarting;
+
+        guardStarting = (async () => {
+          const monitor = await monitorInfo;
+
+          const guard = await zebar.shellSpawn('powershell.exe', [
+            '-NoProfile',
+            '-File',
+            windowCtlScript,
+            '-Action',
+            'guard',
+            '-Match',
+            PANEL_NAMES.join(','),
+            '-Owner',
+            monitor.owner,
+          ]);
+
+          guard.onStdout(line => {
+            const [event, name] = line.trim().split(/\s+/);
+            const state = panels.get(name);
+
+            if (!state) return;
+            if (event === 'open') state.open = true;
+            if (event === 'closed' || event === 'gone') state.open = false;
+          });
+
+          guard.onStderr(line => console.warn('panel guard:', line));
+
+          guard.onExit(status => {
+            console.warn('panel guard exited:', status);
+            panelGuard = null;
+            guardStarting = null;
+            panels.forEach(state => {
+              state.open = false;
+            });
+          });
+
+          window.addEventListener('beforeunload', () => guard.kill());
+
+          panelGuard = guard;
+        })().catch(err => {
+          console.warn('Panel guard failed to start:', err);
+          guardStarting = null;
+        });
+
+        return guardStarting;
+      }
+
+      async function closeWidget(name) {
+        // Fallback for when the guard is not available: one-off closer.
+        await zebar
+          .shellExec('powershell.exe', [
+            '-NoProfile',
+            '-File',
+            windowCtlScript,
+            '-Action',
+            'close',
+            '-Match',
+            name,
+          ])
+          .catch(err => console.warn('Could not close panel:', err));
+      }
+
+      /*
+       * Placement and the guard's owner both come from the monitor this bar sits
+       * on, resolved once at load: a click never waits on a monitor lookup, and
+       * each display gets its own guard instead of the two bars retiring each
+       * other's.
+       */
+      const monitorInfo = (async () => {
+        const info = { preset: 'primary', owner: 'default' };
+
+        try {
+          const { currentMonitor, primaryMonitor } = await import(
+            'https://esm.sh/@tauri-apps/api@2.0.2/window'
+          );
+          const [current, primary] = await Promise.all([
+            currentMonitor(),
+            primaryMonitor(),
+          ]);
+
+          if (current) {
+            info.owner = `m${current.position.x}x${current.position.y}`;
+          }
+
+          if (
+            current &&
+            primary &&
+            (current.position.x !== primary.position.x ||
+              current.position.y !== primary.position.y)
+          ) {
+            info.preset = 'secondary';
+          }
+        } catch (err) {
+          console.warn('Monitor lookup failed, using the primary preset.', err);
+        }
+
+        return info;
+      })();
+
+      let panelPreset = 'primary';
+
+      monitorInfo.then(info => {
+        panelPreset = info.preset;
+      });
+
+      async function toggleWidget(name) {
+        const state = panels.get(name);
+
+        if (state.open) {
+          state.open = false;
+
+          if (panelGuard) {
+            panelGuard.write(`close ${name}\n`);
+          } else {
+            await closeWidget(name);
+          }
+
+          return;
+        }
+
+        state.open = true;
+        startPanelGuard();
+
+        await zebar.startWidgetPreset(name, panelPreset, {
+          packId: zebar.currentWidget().packId,
+        });
+      }
+
+      // Start the guard now instead of on the first click, so even the first
+      // panel is watched from the moment it appears.
+      startPanelGuard();
+
+      createRoot(document.getElementById('root')).render(<App />);
+
+      function App() {
+        const [output, setOutput] = useState(providers.outputMap);
+        const [errors, setErrors] = useState({});
+        // Remembered while nothing is playing, so the tile still shows the last
+        // thing that played instead of disappearing.
+        const [lastTrack, setLastTrack] = useState(null);
+
+        useEffect(() => {
+          providers.onOutput(() => setOutput(providers.outputMap));
+          providers.onError(map => setErrors({ ...map }));
+        }, []);
+
+        const currentSession = output.media?.currentSession || null;
+
+        useEffect(() => {
+          if (currentSession) setLastTrack(currentSession);
+        }, [currentSession]);
+
+        const track = currentSession || lastTrack;
+        const playback = output.audio?.defaultPlaybackDevice || null;
+        const disks = output.disk?.disks || [];
+        const systemDisk =
+          disks.find(one => (one.mountPoint || '').toUpperCase().startsWith('C')) ||
+          disks.find(one => !one.isRemovable) ||
+          disks[0] ||
+          null;
+
+        // Mute gets the crossed out icon, otherwise the icon follows the level.
+        function volumeIcon(volume, isMuted) {
+          if (isMuted || volume === 0) return 'nf-md-volume_off';
+          if (volume < 40) return 'nf-md-volume_low';
+          if (volume < 70) return 'nf-md-volume_medium';
+          return 'nf-md-volume_high';
+        }
+
+        // Wheel over the volume tile nudges it by two steps.
+        function nudgeVolume(event) {
+          if (!playback) return;
+
+          const step = event.deltaY < 0 ? 2 : -2;
+          const next = Math.max(0, Math.min(100, Math.round(playback.volume) + step));
+
+          output.audio
+            .setVolume(next, { deviceId: playback.deviceId })
+            .catch(err => console.warn('volume change failed:', err));
+        }
+
+        // Get icon to show for how much of the battery is charged.
+        function getBatteryIcon(batteryOutput) {
+          if (batteryOutput.chargePercent > 90)
+            return <i className="nf nf-fa-battery_4"></i>;
+          if (batteryOutput.chargePercent > 70)
+            return <i className="nf nf-fa-battery_3"></i>;
+          if (batteryOutput.chargePercent > 40)
+            return <i className="nf nf-fa-battery_2"></i>;
+          if (batteryOutput.chargePercent > 20)
+            return <i className="nf nf-fa-battery_1"></i>;
+          return <i className="nf nf-fa-battery_0"></i>;
+        }
+
+        // Get icon to show for current weather status.
+        function getWeatherIcon(weatherOutput) {
+          switch (weatherOutput.status) {
+            case 'clear_day':
+              return <i className="nf nf-weather-day_sunny"></i>;
+            case 'clear_night':
+              return <i className="nf nf-weather-night_clear"></i>;
+            case 'cloudy_day':
+              return <i className="nf nf-weather-day_cloudy"></i>;
+            case 'cloudy_night':
+              return <i className="nf nf-weather-night_alt_cloudy"></i>;
+            case 'light_rain_day':
+              return <i className="nf nf-weather-day_sprinkle"></i>;
+            case 'light_rain_night':
+              return <i className="nf nf-weather-night_alt_sprinkle"></i>;
+            case 'heavy_rain_day':
+              return <i className="nf nf-weather-day_rain"></i>;
+            case 'heavy_rain_night':
+              return <i className="nf nf-weather-night_alt_rain"></i>;
+            case 'snow_day':
+              return <i className="nf nf-weather-day_snow"></i>;
+            case 'snow_night':
+              return <i className="nf nf-weather-night_alt_snow"></i>;
+            case 'thunder_day':
+              return <i className="nf nf-weather-day_lightning"></i>;
+            case 'thunder_night':
+              return <i className="nf nf-weather-night_alt_lightning"></i>;
+          }
+        }
+
+        return (
+          <div className="app">
+            <div className="left">
+              <i
+                className="logo nf nf-dev-windows11 clickable"
+                onClick={() => toggleWidget('windows-menu')}
+                title="Menu"
+              ></i>
+
+              {track && (
+                <div
+                  className={'media clickable' + (currentSession ? '' : ' stale')}
+                  onClick={() => toggleWidget('media-panel')}
+                  title={
+                    currentSession
+                      ? 'Now playing'
+                      : 'Last played (nothing is playing right now)'
+                  }
+                >
+                  <i
+                    className={
+                      'nf ' + (track.isPlaying ? 'nf-md-pause' : 'nf-md-play')
+                    }
+                  ></i>
+                  <span className="media-text">
+                    {track.title || 'Unknown track'}
+                    {track.artist ? '  ·  ' + track.artist : ''}
+                  </span>
+                </div>
+              )}
+
+            </div>
+
+            <div className="center">
+              {output.date?.formatted}
+              {/* Temporary: provider errors are why a tile disappears. */}
+              {Object.entries(errors)
+                .filter(([, err]) => err)
+                .map(([name, err]) => (
+                  <span className="provider-error" key={name}>
+                    {name}: {JSON.stringify(err).slice(0, 70)}
+                  </span>
+                ))}
+            </div>
+
+            <div className="right">
+              {(output.cpu || output.memory) && (
+                <div
+                  className="system clickable"
+                  onClick={() => toggleWidget('system-panel')}
+                  title="System panel"
+                >
+                  {output.cpu && (
+                    <span className="stat">
+                      <i className="nf nf-oct-cpu"></i>
+
+                      {/* Change the text color if the CPU usage is high. */}
+                      <span
+                        className={output.cpu.usage > 85 ? 'high-usage' : ''}
+                      >
+                        {Math.round(output.cpu.usage)}%
+                      </span>
+                    </span>
+                  )}
+
+                  {output.memory && (
+                    <span className="stat">
+                      <i className="nf nf-fae-chip"></i>
+                      {Math.round(output.memory.usage)}%
+                    </span>
+                  )}
+                </div>
+              )}
+              {playback && (
+                <div
+                  className="volume clickable"
+                  onClick={() => toggleWidget('controls-panel')}
+                  onWheel={nudgeVolume}
+                  title="Volume and brightness"
+                >
+                  <i className={'nf ' + volumeIcon(playback.volume, playback.isMuted)}></i>
+                  {playback.isMuted ? 'muted' : Math.round(playback.volume) + '%'}
+                </div>
+              )}
+
+              {systemDisk && systemDisk.availableSpace && (
+                <div
+                  className="storage clickable"
+                  onClick={() => toggleWidget('storage-panel')}
+                  title={'Storage · ' + (systemDisk.mountPoint || systemDisk.name || '')}
+                >
+                  <i className="nf nf-md-harddisk"></i>
+                  {Math.round(systemDisk.availableSpace.iecValue)}
+                  {systemDisk.availableSpace.iecUnit}
+                </div>
+              )}
+
+              {output.battery && (
+                <div
+                  className="battery clickable"
+                  onClick={() => toggleWidget('battery-panel')}
+                  title="Battery panel"
+                >
+                  {getBatteryIcon(output.battery)}
+                  {Math.round(output.battery.chargePercent)}%
+                  {/* Charging bolt, after the value. */}
+                  {output.battery.isCharging && (
+                    <i className="nf nf-md-power_plug charging-icon"></i>
+                  )}
+                </div>
+              )}
+
+              {output.weather && (
+                <div
+                  className="weather clickable"
+                  onClick={() => toggleWidget('weather-panel')}
+                  title="Forecast"
+                >
+                  {getWeatherIcon(output.weather)}
+                  {Math.round(output.weather.celsiusTemp)}°C
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+    </script>
+  </body>
+</html>

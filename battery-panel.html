@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+  </head>
+  <body class="panel-body">
+    <div class="panel">
+      <div class="panel-header">
+        <i class="nf nf-md-battery" id="header-icon"></i>
+        <span class="panel-title">Battery</span>
+      </div>
+
+      <div class="panel-hero">
+        <span class="hero-value" id="percent">--</span>
+        <span class="hero-state" id="state">reading</span>
+      </div>
+
+      <div class="level-track">
+        <div class="level-fill" id="level-fill"></div>
+      </div>
+
+      <div class="panel-rows" id="rows"></div>
+    </div>
+
+    <script type="module">
+      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+
+      const widget = zebar.currentWidget();
+
+
+
+      const battery = zebar.createProvider({
+        type: 'battery',
+        refreshInterval: 2000,
+      });
+
+      const el = {
+        headerIcon: document.getElementById('header-icon'),
+        percent: document.getElementById('percent'),
+        state: document.getElementById('state'),
+        fill: document.getElementById('level-fill'),
+        rows: document.getElementById('rows'),
+      };
+
+      function humanDuration(ms) {
+        if (ms === null || ms === undefined) return null;
+
+        const minutes = Math.round(ms / 60000);
+        const hours = Math.floor(minutes / 60);
+        const rest = minutes % 60;
+
+        if (hours === 0) return rest + ' min';
+        return hours + ' h ' + String(rest).padStart(2, '0') + ' min';
+      }
+
+      function stateLabel(state) {
+        switch (state) {
+          case 'charging':
+            return 'charging';
+          case 'discharging':
+            return 'on battery';
+          case 'full':
+            return 'full';
+          case 'empty':
+            return 'empty';
+          default:
+            return 'unknown';
+        }
+      }
+
+      function row(icon, label, value) {
+        if (value === null || value === undefined) return '';
+
+        return (
+          '<div class="panel-row">' +
+          '<i class="nf ' + icon + '"></i>' +
+          '<span class="row-label">' + label + '</span>' +
+          '<span class="row-value">' + value + '</span>' +
+          '</div>'
+        );
+      }
+
+      function render(output) {
+        if (!output) return;
+
+        const percent = Math.round(output.chargePercent);
+        const charging = output.isCharging;
+
+        el.percent.textContent = percent + '%';
+        el.state.textContent = stateLabel(output.state);
+        el.fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+        el.fill.dataset.state = charging ? 'charging' : 'discharging';
+        el.headerIcon.className =
+          'nf ' + (charging ? 'nf-md-battery_charging' : 'nf-md-battery');
+
+        el.rows.innerHTML = [
+          row(
+            'nf-md-timer_outline',
+            charging ? 'Until full' : 'Time left',
+            humanDuration(charging ? output.timeTillFull : output.timeTillEmpty),
+          ),
+          row(
+            'nf-md-heart_pulse',
+            'Health',
+            output.healthPercent !== null
+              ? Math.round(output.healthPercent) + '%'
+              : null,
+          ),
+          row('nf-md-counter', 'Cycles', output.cycleCount),
+          row(
+            'nf-md-flash_outline',
+            'Draw',
+            output.powerConsumption !== null
+              ? output.powerConsumption.toFixed(1) + ' W'
+              : null,
+          ),
+          row(
+            'nf-md-lightning_bolt',
+            'Voltage',
+            output.voltage !== null ? output.voltage.toFixed(2) + ' V' : null,
+          ),
+        ].join('');
+      }
+
+      battery.onOutput(render);
+      render(battery.output);
+
+      /* Closing is done from outside, by the helper the bar starts when it
+         opens this panel (see window-ctl.ps1). Escape here is a bonus. */
+      // Animate out first, then close: the window is transparent, so a short
+      // fade and lift is visible before it disappears.
+      function close() {
+        const panel = document.querySelector('.panel');
+
+        if (!panel || panel.classList.contains('closing')) {
+          widget.close();
+          return;
+        }
+
+        panel.classList.add('closing');
+        setTimeout(() => widget.close(), 130);
+      }
+
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+      });
+    </script>
+  </body>
+</html>

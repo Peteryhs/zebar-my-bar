@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+  </head>
+  <body class="panel-body">
+    <div class="panel media-panel">
+      <div class="panel-header">
+        <i class="nf nf-md-music" id="header-icon"></i>
+        <span class="panel-title">Now playing</span>
+        <span class="panel-place" id="media-state"></span>
+      </div>
+
+      <div class="media-track">
+        <div class="media-title" id="media-title">Nothing playing</div>
+        <div class="media-artist" id="media-artist"></div>
+        <div class="media-album" id="media-album"></div>
+      </div>
+
+      <div class="media-progress">
+        <div class="level-track media-track-bar">
+          <div class="level-fill" id="media-fill"></div>
+        </div>
+        <div class="media-times">
+          <span id="media-position">0:00</span>
+          <span id="media-duration">0:00</span>
+        </div>
+      </div>
+
+      <div class="media-controls">
+        <button class="media-button" id="previous" title="Previous">
+          <i class="nf nf-md-skip_previous"></i>
+        </button>
+        <button class="media-button media-button-main" id="toggle" title="Play or pause">
+          <i class="nf nf-md-play"></i>
+        </button>
+        <button class="media-button" id="next" title="Next">
+          <i class="nf nf-md-skip_next"></i>
+        </button>
+      </div>
+    </div>
+
+    <script type="module">
+      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+
+      const widget = zebar.currentWidget();
+
+
+
+      const media = zebar.createProvider({ type: 'media' });
+
+      const el = {
+        icon: document.getElementById('header-icon'),
+        state: document.getElementById('media-state'),
+        title: document.getElementById('media-title'),
+        artist: document.getElementById('media-artist'),
+        album: document.getElementById('media-album'),
+        fill: document.getElementById('media-fill'),
+        position: document.getElementById('media-position'),
+        duration: document.getElementById('media-duration'),
+        toggle: document.getElementById('toggle'),
+        toggleIcon: document.querySelector('#toggle i'),
+        previous: document.getElementById('previous'),
+        next: document.getElementById('next'),
+      };
+
+      let session = null;
+      let positionSeconds = 0;
+      let durationSeconds = 0;
+
+      /*
+       * GSMTC reports the timeline in 100ns ticks (10^7 per second). The check
+       * keeps the panel readable if a platform reports milliseconds instead.
+       */
+      function toSeconds(value) {
+        if (!value) return 0;
+
+        const asTicks = value / 1e7;
+
+        if (asTicks > 0 && asTicks < 86400) return asTicks;
+        return value / 1e3;
+      }
+
+      function clock(seconds) {
+        if (!isFinite(seconds) || seconds < 0) seconds = 0;
+
+        const total = Math.floor(seconds);
+        const minutes = Math.floor(total / 60);
+
+        return minutes + ':' + String(total % 60).padStart(2, '0');
+      }
+
+      function renderTimeline() {
+        const ratio = durationSeconds > 0 ? positionSeconds / durationSeconds : 0;
+
+        el.fill.style.width = Math.max(0, Math.min(100, ratio * 100)) + '%';
+        el.position.textContent = clock(positionSeconds);
+        el.duration.textContent = clock(durationSeconds);
+      }
+
+      function render() {
+        if (!session) {
+          el.title.textContent = 'Nothing playing';
+          el.artist.textContent = 'Start something and it shows up here.';
+          el.album.textContent = '';
+          el.state.textContent = '';
+          el.toggleIcon.className = 'nf nf-md-play';
+          el.fill.style.width = '0%';
+          positionSeconds = 0;
+          durationSeconds = 0;
+          renderTimeline();
+          return;
+        }
+
+        el.title.textContent = session.title || 'Unknown track';
+        el.artist.textContent = session.artist || session.albumArtist || '';
+        el.album.textContent = session.albumTitle || '';
+        el.state.textContent = session.isPlaying ? 'playing' : 'paused';
+        el.toggleIcon.className = session.isPlaying ? 'nf nf-md-pause' : 'nf nf-md-play';
+      }
+
+      function useSession(next) {
+        session = next;
+
+        if (!session) {
+          render();
+          return;
+        }
+
+        const start = toSeconds(session.startTime);
+        const end = toSeconds(session.endTime);
+
+        durationSeconds = Math.max(0, end - start);
+        positionSeconds = Math.max(0, toSeconds(session.position) - start);
+        render();
+        renderTimeline();
+      }
+
+      media.onOutput(output => {
+        useSession(output.currentSession);
+      });
+
+      media.onError(error => {
+        el.artist.textContent = 'Media provider error: ' + JSON.stringify(error);
+      });
+
+      // The provider refreshes the position every few seconds, so advance the
+      // bar locally in between.
+      setInterval(() => {
+        if (session && session.isPlaying && positionSeconds < durationSeconds) {
+          positionSeconds += 1;
+          renderTimeline();
+        }
+      }, 1000);
+
+      // Transport clicks run without closing the panel: a panel that vanishes
+      // after one click is useless for skipping tracks.
+      async function run(action) {
+        try {
+          await action();
+        } catch (error) {
+          el.artist.textContent = 'Failed: ' + (error?.message || error);
+        }
+      }
+
+      el.toggle.addEventListener('click', () => run(() => media.output.togglePlayPause()));
+      el.previous.addEventListener('click', () => run(() => media.output.previous()));
+      el.next.addEventListener('click', () => run(() => media.output.next()));
+
+      // Animate out first, then close: the window is transparent, so a short
+      // fade and lift is visible before it disappears.
+      function close() {
+        const panel = document.querySelector('.panel');
+
+        if (!panel || panel.classList.contains('closing')) {
+          widget.close();
+          return;
+        }
+
+        panel.classList.add('closing');
+        setTimeout(() => widget.close(), 130);
+      }
+
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+      });
+
+      render();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+  </head>
+  <body class="panel-body">
+    <div class="panel menu">
+      <div class="menu-items" id="items"></div>
+    </div>
+
+    <script type="module">
+      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+
+      const widget = zebar.currentWidget();
+
+
+      const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
+      const powerScript = packDir + '\\scripts\\power.ps1';
+
+      /* Same shape as the Apple menu: a system group, quick settings, then
+         session actions. `cmd` runs through cmd.exe, `power` through
+         scripts/power.ps1. Both are allowlisted in zpack.json. */
+      const items = [
+        { icon: 'nf-md-information_outline', label: 'About this computer', cmd: ['/c', 'start', 'ms-settings:about'] },
+        { icon: 'nf-md-cog', label: 'System settings', cmd: ['/c', 'start', 'ms-settings:'] },
+        { separator: true },
+        { icon: 'nf-md-monitor', label: 'Display', cmd: ['/c', 'start', 'ms-settings:display'] },
+        { icon: 'nf-md-volume_high', label: 'Sound', cmd: ['/c', 'start', 'ms-settings:sound'] },
+        { icon: 'nf-md-bluetooth', label: 'Bluetooth', cmd: ['/c', 'start', 'ms-settings:bluetooth'] },
+        { icon: 'nf-md-wifi', label: 'Network', cmd: ['/c', 'start', 'ms-settings:network'] },
+        { separator: true },
+        { icon: 'nf-md-chart_line', label: 'Task Manager', cmd: ['/c', 'start', 'taskmgr'] },
+        { separator: true },
+        { icon: 'nf-md-lock', label: 'Lock', power: 'lock' },
+        { icon: 'nf-md-power_sleep', label: 'Sleep', power: 'sleep' },
+        { icon: 'nf-md-restart', label: 'Restart', power: 'restart' },
+        { icon: 'nf-md-power', label: 'Shut down', power: 'shutdown' },
+        { icon: 'nf-md-logout', label: 'Sign out', power: 'signout' },
+      ];
+
+      const container = document.getElementById('items');
+
+      function render() {
+        container.innerHTML = items
+          .map((item, index) =>
+            item.separator
+              ? '<div class="menu-separator"></div>'
+              : '<button class="menu-item" data-index="' + index + '">' +
+                '<i class="nf ' + item.icon + '"></i>' +
+                '<span>' + item.label + '</span>' +
+                '</button>',
+          )
+          .join('');
+      }
+
+      render();
+
+      // Animate out first, then close: the window is transparent, so a short
+      // fade and lift is visible before it disappears.
+      function close() {
+        const panel = document.querySelector('.panel');
+
+        if (!panel || panel.classList.contains('closing')) {
+          widget.close();
+          return;
+        }
+
+        panel.classList.add('closing');
+        setTimeout(() => widget.close(), 130);
+      }
+
+      /* Failures used to go to the console, where nobody sees them. Show them
+         in the menu instead, over the bottom of it. */
+      let errorTimer = null;
+
+      function showError(message) {
+        let note = document.getElementById('menu-error');
+
+        if (!note) {
+          note = document.createElement('div');
+          note.id = 'menu-error';
+          note.className = 'menu-error';
+          document.querySelector('.panel').appendChild(note);
+        }
+
+        note.textContent = message;
+        clearTimeout(errorTimer);
+        errorTimer = setTimeout(() => note.remove(), 10000);
+      }
+
+      /*
+       * Run the action first, close second. Closing immediately would tear down
+       * this page before the shell call reaches the app, which is why nothing
+       * used to happen.
+       */
+      async function run(item) {
+        try {
+          if (item.cmd) {
+            await zebar.shellExec('cmd.exe', item.cmd);
+          } else if (item.power) {
+            await zebar.shellExec('powershell.exe', [
+              '-NoProfile',
+              '-File',
+              powerScript,
+              item.power,
+            ]);
+          }
+        } catch (err) {
+          showError('Failed: ' + String((err && err.message) || err));
+          return;
+        }
+
+        close();
+      }
+
+      container.addEventListener('click', event => {
+        const button = event.target.closest('.menu-item');
+        if (!button) return;
+
+        const item = items[Number(button.dataset.index)];
+        if (!item) return;
+
+        run(item);
+      });
+
+      /* Closing is done from outside, by the helper the bar starts when it
+         opens this menu (see window-ctl.ps1). Escape here is a bonus. */
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+      });
+    </script>
+  </body>
+</html>

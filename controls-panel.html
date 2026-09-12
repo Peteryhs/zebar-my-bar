@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+  </head>
+  <body class="panel-body">
+    <div class="panel controls-panel">
+      <div class="panel-header">
+        <i class="nf nf-md-tune_variant"></i>
+        <span class="panel-title">Volume and brightness</span>
+      </div>
+
+      <div class="control-block">
+        <div class="control-row">
+          <i class="nf nf-md-volume_high" id="volume-icon"></i>
+          <span class="control-label">Volume</span>
+          <span class="control-value" id="volume-value">--</span>
+          <button class="control-button" id="mute" title="Mute or unmute">
+            <i class="nf nf-md-volume_mute"></i>
+          </button>
+        </div>
+        <input
+          class="control-slider"
+          id="volume-slider"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value="0"
+        />
+        <div class="control-place" id="volume-device"></div>
+      </div>
+
+      <div class="control-block">
+        <div class="control-row">
+          <i class="nf nf-md-brightness_6" id="brightness-icon"></i>
+          <span class="control-label">Brightness</span>
+          <span class="control-value" id="brightness-value">--</span>
+        </div>
+        <input
+          class="control-slider"
+          id="brightness-slider"
+          type="range"
+          min="1"
+          max="100"
+          step="1"
+          value="50"
+        />
+        <div class="control-place" id="brightness-note"></div>
+      </div>
+    </div>
+
+    <script type="module">
+      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+
+      const widget = zebar.currentWidget();
+
+
+      const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
+      const brightnessScript = `${packDir}\\scripts\\brightness.ps1`;
+
+      const audio = zebar.createProvider({ type: 'audio' });
+
+      const el = {
+        icon: document.getElementById('volume-icon'),
+        value: document.getElementById('volume-value'),
+        slider: document.getElementById('volume-slider'),
+        mute: document.getElementById('mute'),
+        device: document.getElementById('volume-device'),
+        brightnessIcon: document.getElementById('brightness-icon'),
+        brightnessValue: document.getElementById('brightness-value'),
+        brightnessSlider: document.getElementById('brightness-slider'),
+        brightnessNote: document.getElementById('brightness-note'),
+      };
+
+      let device = null;
+      let draggingVolume = false;
+
+      function volumeIcon(volume, muted) {
+        if (muted || volume === 0) return 'nf-md-volume_off';
+        if (volume < 40) return 'nf-md-volume_low';
+        if (volume < 70) return 'nf-md-volume_medium';
+        return 'nf-md-volume_high';
+      }
+
+      /**
+       * Runs the brightness script. Same program and shape as the bar's other
+       * helpers, so one privilege entry covers it.
+       */
+      async function shellScript(script, args) {
+        const output = await zebar.shellExec('powershell.exe', [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          script,
+          ...args,
+        ]);
+
+        return (output.stdout || '').trim();
+      }
+
+      function renderAudio() {
+        if (!device) return;
+
+        const volume = Math.round(device.volume);
+
+        el.value.textContent = device.isMuted ? 'muted' : volume + '%';
+        el.icon.className = 'nf ' + volumeIcon(volume, device.isMuted);
+        el.mute.classList.toggle('active', device.isMuted);
+
+        if (!draggingVolume) el.slider.value = String(volume);
+      }
+
+      audio.onOutput(output => {
+        device = output.defaultPlaybackDevice;
+        el.device.textContent = device ? device.name : 'no output device';
+        renderAudio();
+      });
+
+      audio.onError(error => {
+        el.device.textContent = 'Audio provider error: ' + JSON.stringify(error);
+      });
+
+      /*
+       * Volume follows the slider while it is dragged, not on release. Only one
+       * call is in flight at a time and the newest value wins, so a fast drag
+       * cannot queue up a backlog of changes.
+       */
+      let volumeInFlight = false;
+      let pendingVolume = null;
+
+      async function pushVolume(volume) {
+        if (!device) return;
+
+        if (volumeInFlight) {
+          pendingVolume = volume;
+          return;
+        }
+
+        volumeInFlight = true;
+
+        try {
+          await audio.output.setVolume(volume, { deviceId: device.deviceId });
+        } catch (error) {
+          el.device.textContent = 'Failed: ' + (error?.message || error);
+        } finally {
+          volumeInFlight = false;
+        }
+
+        if (pendingVolume !== null) {
+          const next = pendingVolume;
+          pendingVolume = null;
+          pushVolume(next);
+        }
+      }
+
+      el.slider.addEventListener('input', () => {
+        draggingVolume = true;
+        el.value.textContent = el.slider.value + '%';
+        pushVolume(Number(el.slider.value));
+      });
+
+      el.slider.addEventListener('change', () => {
+        draggingVolume = false;
+      });
+
+      el.mute.addEventListener('click', async () => {
+        if (!device) return;
+
+        try {
+          await audio.output.setMute(!device.isMuted, { deviceId: device.deviceId });
+        } catch (error) {
+          el.device.textContent = 'Failed: ' + (error?.message || error);
+        }
+      });
+
+      async function refreshBrightness(setTo) {
+        try {
+          const raw = await shellScript(
+            brightnessScript,
+            setTo === undefined ? ['-Action', 'get'] : ['-Action', 'set', '-Value', String(setTo)],
+          );
+          const level = Number(raw);
+
+          if (!isFinite(level) || level < 0) {
+            el.brightnessValue.textContent = 'n/a';
+            el.brightnessNote.textContent = 'This panel has no software brightness control.';
+            el.brightnessSlider.disabled = true;
+            return;
+          }
+
+          el.brightnessValue.textContent = level + '%';
+          el.brightnessSlider.value = String(level);
+          el.brightnessNote.textContent = '';
+          el.brightnessIcon.className =
+            'nf ' + (level > 60 ? 'nf-md-brightness_7' : 'nf-md-brightness_5');
+        } catch (error) {
+          el.brightnessValue.textContent = 'n/a';
+          el.brightnessNote.textContent = 'Brightness script failed: ' + (error?.message || error);
+        }
+      }
+
+      /*
+       * Brightness also follows the slider, but every change starts a PowerShell
+       * process, so changes are coalesced: one in flight, newest value wins.
+       */
+      let brightnessInFlight = false;
+      let pendingBrightness = null;
+
+      async function pushBrightness(level) {
+        el.brightnessValue.textContent = level + '%';
+
+        if (brightnessInFlight) {
+          pendingBrightness = level;
+          return;
+        }
+
+        brightnessInFlight = true;
+
+        try {
+          await shellScript(brightnessScript, ['-Action', 'set', '-Value', String(level)]);
+        } catch (error) {
+          el.brightnessNote.textContent = 'Brightness failed: ' + (error?.message || error);
+        } finally {
+          brightnessInFlight = false;
+        }
+
+        if (pendingBrightness !== null) {
+          const next = pendingBrightness;
+          pendingBrightness = null;
+          pushBrightness(next);
+        }
+      }
+
+      el.brightnessSlider.addEventListener('input', () => {
+        pushBrightness(Number(el.brightnessSlider.value));
+      });
+
+      refreshBrightness();
+
+      /* Closing is done from outside, by the helper the bar starts when it opens
+         this panel (see window-ctl.ps1). Escape here is a bonus. */
+      // Animate out first, then close: the window is transparent, so a short
+      // fade and lift is visible before it disappears.
+      function close() {
+        const panel = document.querySelector('.panel');
+
+        if (!panel || panel.classList.contains('closing')) {
+          widget.close();
+          return;
+        }
+
+        panel.classList.add('closing');
+        setTimeout(() => widget.close(), 130);
+      }
+
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+      });
+    </script>
+  </body>
+</html>

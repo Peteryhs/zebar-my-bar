@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+  </head>
+  <body class="panel-body">
+    <div class="panel storage-panel">
+      <div class="panel-header">
+        <i class="nf nf-md-harddisk"></i>
+        <span class="panel-title">Storage</span>
+        <span class="panel-place" id="disk-count"></span>
+      </div>
+
+      <div id="disks"></div>
+    </div>
+
+    <script type="module">
+      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+
+      const widget = zebar.currentWidget();
+
+
+
+      const disk = zebar.createProvider({ type: 'disk', refreshInterval: 60000 });
+
+      const el = {
+        count: document.getElementById('disk-count'),
+        disks: document.getElementById('disks'),
+      };
+
+      // The disk provider already formats sizes, e.g. { iecValue: 411.6,
+      // iecUnit: 'GiB' }.
+      function size(measure, digits) {
+        if (!measure) return '--';
+
+        const value = measure.iecValue;
+
+        return (
+          (digits === 0 ? Math.round(value) : value.toFixed(1)) + ' ' + measure.iecUnit
+        );
+      }
+
+      // Green while there is room, amber past 75% full, red past 90%.
+      function usedState(percent) {
+        if (percent >= 90) return 'high';
+        if (percent >= 75) return 'warn';
+        return 'ok';
+      }
+
+      function render(disks) {
+        if (!disks || disks.length === 0) {
+          el.disks.innerHTML = '<div class="panel-row">No disks reported.</div>';
+          return;
+        }
+
+        el.count.textContent = disks.length + (disks.length === 1 ? ' disk' : ' disks');
+
+        el.disks.innerHTML = disks
+          .map(one => {
+            const total = one.totalSpace ? one.totalSpace.bytes : 0;
+            const free = one.availableSpace ? one.availableSpace.bytes : 0;
+            const used = Math.max(0, total - free);
+            const percent = total > 0 ? (used / total) * 100 : 0;
+            const label = one.mountPoint || one.name || 'disk';
+
+            return (
+              '<div class="system-block">' +
+              '<div class="system-line">' +
+              '<span class="system-label">' +
+              (one.name ? one.name + '  ' : '') +
+              '<span class="storage-mount">' +
+              label +
+              '</span>' +
+              (one.isRemovable ? ' <i class="nf nf-md-usb_flash"></i>' : '') +
+              '</span>' +
+              '<span class="system-value">' +
+              size(one.availableSpace, 0) +
+              ' free of ' +
+              size(one.totalSpace, 0) +
+              '</span>' +
+              '</div>' +
+              '<div class="level-track"><div class="level-fill" data-state="' +
+              usedState(percent) +
+              '" style="width: ' +
+              Math.max(0, Math.min(100, percent)).toFixed(1) +
+              '%"></div></div>' +
+              '<div class="storage-detail">' +
+              percent.toFixed(0) +
+              '% used  ·  ' +
+              (one.fileSystem || '') +
+              (one.driveType ? '  ·  ' + one.driveType : '') +
+              '</div>' +
+              '</div>'
+            );
+          })
+          .join('');
+      }
+
+      disk.onOutput(output => render(output.disks));
+      disk.onError(error => {
+        el.disks.innerHTML =
+          '<div class="panel-row">Disk provider error: ' +
+          JSON.stringify(error).slice(0, 120) +
+          '</div>';
+      });
+
+      /* Closing is done from outside, by the helper the bar starts when it opens
+         this panel (see window-ctl.ps1). Escape here is a bonus. */
+      // Animate out first, then close: the window is transparent, so a short
+      // fade and lift is visible before it disappears.
+      function close() {
+        const panel = document.querySelector('.panel');
+
+        if (!panel || panel.classList.contains('closing')) {
+          widget.close();
+          return;
+        }
+
+        panel.classList.add('closing');
+        setTimeout(() => widget.close(), 130);
+      }
+
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+      });
+    </script>
+  </body>
+</html>

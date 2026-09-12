@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+  </head>
+  <body class="panel-body">
+    <div class="panel system-panel">
+      <div class="panel-header">
+        <i class="nf nf-md-chip"></i>
+        <span class="panel-title">System</span>
+        <span class="panel-place" id="hostname"></span>
+      </div>
+
+      <div class="system-block">
+        <div class="system-line">
+          <span class="system-label">CPU</span>
+          <span class="system-value" id="cpu-value">--</span>
+        </div>
+        <div class="level-track">
+          <div class="level-fill" id="cpu-fill"></div>
+        </div>
+      </div>
+
+      <div class="system-block">
+        <div class="system-line">
+          <span class="system-label">Memory</span>
+          <span class="system-value" id="memory-value">--</span>
+        </div>
+        <div class="level-track">
+          <div class="level-fill" id="memory-fill"></div>
+        </div>
+      </div>
+
+      <div class="panel-separator"></div>
+
+      <div class="panel-rows" id="rows"></div>
+    </div>
+
+    <script type="module">
+      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+
+      const widget = zebar.currentWidget();
+
+
+
+      const cpu = zebar.createProvider({ type: 'cpu', refreshInterval: 1500 });
+      const memory = zebar.createProvider({
+        type: 'memory',
+        refreshInterval: 1500,
+      });
+      const host = zebar.createProvider({ type: 'host', refreshInterval: 60000 });
+
+      const el = {
+        hostname: document.getElementById('hostname'),
+        cpuValue: document.getElementById('cpu-value'),
+        cpuFill: document.getElementById('cpu-fill'),
+        memoryValue: document.getElementById('memory-value'),
+        memoryFill: document.getElementById('memory-fill'),
+        rows: document.getElementById('rows'),
+      };
+
+      let cpuOutput = null;
+      let memoryOutput = null;
+      let hostOutput = null;
+
+      function bytesToGb(bytes) {
+        return bytes / 1024 / 1024 / 1024;
+      }
+
+      function gb(bytes) {
+        const value = bytesToGb(bytes);
+
+        if (value < 10) return value.toFixed(1) + ' GB';
+        return Math.round(value) + ' GB';
+      }
+
+      function humanDuration(seconds) {
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+
+        if (days > 0) return days + ' d ' + (hours % 24) + ' h';
+        if (hours > 0) return hours + ' h ' + String(minutes % 60).padStart(2, '0') + ' min';
+        return minutes + ' min';
+      }
+
+      // Green up to 70%, amber to 90%, red past that.
+      function loadState(percent) {
+        if (percent >= 90) return 'high';
+        if (percent >= 70) return 'warn';
+        return 'ok';
+      }
+
+      function row(icon, label, value) {
+        if (value === null || value === undefined || value === '') return '';
+
+        return (
+          '<div class="panel-row">' +
+          '<i class="nf ' + icon + '"></i>' +
+          '<span class="row-label">' + label + '</span>' +
+          '<span class="row-value">' + value + '</span>' +
+          '</div>'
+        );
+      }
+
+      function render() {
+        if (cpuOutput) {
+          const usage = Math.round(cpuOutput.usage);
+
+          el.cpuValue.textContent =
+            usage +
+            '%' +
+            (cpuOutput.frequency ? '  ·  ' + (cpuOutput.frequency / 1000).toFixed(1) + ' GHz' : '');
+          el.cpuFill.style.width = Math.max(0, Math.min(100, usage)) + '%';
+          el.cpuFill.dataset.state = loadState(usage);
+        }
+
+        if (memoryOutput) {
+          const usage = Math.round(memoryOutput.usage);
+
+          el.memoryValue.textContent =
+            gb(memoryOutput.usedMemory) +
+            ' / ' +
+            gb(memoryOutput.totalMemory) +
+            '  ·  ' +
+            usage +
+            '%';
+          el.memoryFill.style.width = Math.max(0, Math.min(100, usage)) + '%';
+          el.memoryFill.dataset.state = loadState(usage);
+        }
+
+        if (hostOutput && hostOutput.hostname) {
+          el.hostname.textContent = hostOutput.hostname;
+        }
+
+        el.rows.innerHTML = [
+          row(
+            'nf-md-memory',
+            'Cores',
+            cpuOutput
+              ? cpuOutput.logicalCoreCount +
+                ' logical' +
+                (cpuOutput.physicalCoreCount
+                  ? ' / ' + cpuOutput.physicalCoreCount + ' physical'
+                  : '')
+              : null,
+          ),
+          row(
+            'nf-md-swap_horizontal',
+            'Swap',
+            memoryOutput && memoryOutput.totalSwap > 0
+              ? gb(memoryOutput.usedSwap) + ' / ' + gb(memoryOutput.totalSwap)
+              : null,
+          ),
+          row(
+            'nf-md-timer_outline',
+            'Uptime',
+            hostOutput && hostOutput.uptime
+              ? humanDuration(hostOutput.uptime)
+              : null,
+          ),
+          row('nf-md-chip', 'Vendor', cpuOutput ? cpuOutput.vendor : null),
+        ].join('');
+      }
+
+      cpu.onOutput(output => {
+        cpuOutput = output;
+        render();
+      });
+
+      memory.onOutput(output => {
+        memoryOutput = output;
+        render();
+      });
+
+      host.onOutput(output => {
+        hostOutput = output;
+        render();
+      });
+
+      render();
+
+      /* Closing is done from outside, by the helper the bar starts when it opens
+         this panel (see window-ctl.ps1). Escape here is a bonus. */
+      // Animate out first, then close: the window is transparent, so a short
+      // fade and lift is visible before it disappears.
+      function close() {
+        const panel = document.querySelector('.panel');
+
+        if (!panel || panel.classList.contains('closing')) {
+          widget.close();
+          return;
+        }
+
+        panel.classList.add('closing');
+        setTimeout(() => widget.close(), 130);
+      }
+
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+      });
+    </script>
+  </body>
+</html>
