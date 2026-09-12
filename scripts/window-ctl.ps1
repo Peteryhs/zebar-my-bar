@@ -50,10 +50,25 @@ param(
   [int]$WaitMs = 250,
   # Looking for new panel windows: the expensive part, so it runs at this rate only
   # when a panel is open or one was just asked for, and at the lazy rate otherwise.
-  [int]$ScanMs = 400,
+  [int]$ScanMs = 150,
   [int]$ScanIdleMs = 3000,
   [int]$ScanAfterClickMs = 2500,
-  [int]$GraceMs = 250,
+  <#
+    Clicks ignored after a panel is attached.
+    
+    Zero, and the reason is worth writing down because 250ms here cost several
+    rounds of "it takes two clicks". This was meant to ignore the click that opened
+    the panel, from when clicks were detected by a flag that could be read twice.
+    They are not any more: a press is an up-to-down transition, the opening click
+    happens before the window exists so it is consumed in an earlier pass, and the
+    baseline is resynced when the panel attaches. It cannot be seen twice.
+    
+    What the grace did instead was throw away real dismissals. It ran from the
+    moment the guard noticed the window, not from the moment the panel opened, and
+    noticing can be a scan behind — so a click made just after the panel appeared
+    was measured against a clock that had barely started and dropped as too early.
+  #>
+  [int]$GraceMs = 0,
   [int]$ForegroundMs = 250,
   [int]$HousekeepingMs = 5000,
   [int]$MaxLifetimeMinutes = 240

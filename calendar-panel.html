@@ -32,12 +32,20 @@
         </button>
       </div>
 
-      <div class="cal-grid" id="weekdays"></div>
-      <div class="cal-grid" id="days"></div>
+      <!-- Month on the left, the selected day on the right, which is where the
+           room is: a day's events read better along a line than down a list. -->
+      <div class="cal-body">
+        <div class="cal-month">
+          <div class="cal-grid" id="weekdays"></div>
+          <div class="cal-grid" id="days"></div>
+        </div>
 
-      <div class="panel-separator"></div>
-
-      <div class="cal-agenda" id="agenda"></div>
+        <div class="cal-day-view">
+          <div class="cal-upnext" id="upnext" hidden></div>
+          <div class="cal-day-title" id="day-title"></div>
+          <div class="cal-blocks" id="blocks"></div>
+        </div>
+      </div>
     </div>
 
     <script type="module">
@@ -52,11 +60,16 @@
       const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
       const calendarScript = `${packDir}\\scripts\\calendar.ps1`;
 
+      // Warn about an event this long before it starts.
+      const WARN_MINUTES = 15;
+
       const el = {
         title: document.getElementById('month-title'),
         weekdays: document.getElementById('weekdays'),
         days: document.getElementById('days'),
-        agenda: document.getElementById('agenda'),
+        dayTitle: document.getElementById('day-title'),
+        blocks: document.getElementById('blocks'),
+        upnext: document.getElementById('upnext'),
       };
 
       const today = startOfDay(new Date());
@@ -93,9 +106,16 @@
         });
       }
 
+      function escapeHtml(text) {
+        return String(text)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+      }
+
       /*
-       * Weekday initials in the reader's own locale, and starting on whichever day
-       * their locale starts on rather than assuming Monday.
+       * Weekday initials in the reader's own locale, starting on whichever day their
+       * locale starts on rather than assuming Monday.
        */
       const firstDayOfWeek = (() => {
         try {
@@ -115,7 +135,6 @@
         const names = [];
 
         for (let i = 0; i < 7; i++) {
-          // Any known Sunday works as a starting point for the names.
           const sample = new Date(2024, 8, 1 + ((firstDayOfWeek + i) % 7));
 
           names.push(
@@ -141,7 +160,23 @@
         return map;
       }
 
-      function render() {
+      /*
+       * Where an event sits relative to now: done with, happening, or still to come.
+       * This is what the colour says, so it is worked out in one place.
+       */
+      function stateOf(event, now) {
+        if (event.allDay) {
+          if (!sameDay(event.start, now)) return event.start < now ? 'past' : 'future';
+          return 'now';
+        }
+
+        if (event.end <= now) return 'past';
+        if (event.start <= now) return 'now';
+
+        return 'future';
+      }
+
+      function renderMonth() {
         el.title.textContent = shownMonth.toLocaleDateString(undefined, {
           month: 'long',
           year: 'numeric',
@@ -149,7 +184,6 @@
 
         const byDay = eventsByDay();
         const firstOfMonth = new Date(shownMonth);
-        // How far back to reach so the grid starts on the right weekday.
         const lead = (firstOfMonth.getDay() - firstDayOfWeek + 7) % 7;
         const start = new Date(firstOfMonth);
         start.setDate(start.getDate() - lead);
@@ -180,12 +214,21 @@
         }
 
         el.days.innerHTML = cells.join('');
-        renderAgenda(byDay);
       }
 
-      function renderAgenda(byDay) {
-        const forDay = byDay.get(dayKey(selected)) || [];
-        const heading = sameDay(selected, today)
+      /*
+       * The selected day as blocks along a line rather than a list.
+       *
+       * A block's width follows how long the event runs, so a half hour reads as
+       * narrower than an afternoon, but clamped: below about 70px a title is not
+       * worth printing, and past a point extra width says nothing. Gaps between
+       * blocks are free time.
+       */
+      function renderDay() {
+        const now = new Date();
+        const forDay = eventsByDay().get(dayKey(selected)) || [];
+
+        el.dayTitle.textContent = sameDay(selected, today)
           ? 'Today'
           : selected.toLocaleDateString(undefined, {
               weekday: 'long',
@@ -194,34 +237,69 @@
             });
 
         if (forDay.length === 0) {
-          el.agenda.innerHTML =
-            '<div class="cal-agenda-day">' + heading + '</div>' +
-            '<div class="cal-agenda-empty">Nothing scheduled</div>';
+          el.blocks.innerHTML = '<div class="cal-blocks-empty">Nothing scheduled</div>';
           return;
         }
 
-        el.agenda.innerHTML =
-          '<div class="cal-agenda-day">' + heading + '</div>' +
-          forDay
-            .map(
-              event =>
-                '<div class="cal-event">' +
-                '<span class="cal-event-time">' +
-                (event.allDay ? 'all day' : timeText(event.start)) +
-                '</span>' +
-                '<span class="cal-event-title">' +
-                escapeHtml(event.summary) +
-                '</span>' +
-                '</div>',
-            )
-            .join('');
+        el.blocks.innerHTML = forDay
+          .map(event => {
+            const minutes = event.allDay
+              ? 240
+              : Math.max(15, Math.round((event.end - event.start) / 60000));
+            const width = Math.min(190, Math.max(78, Math.round(minutes * 1.6)));
+            const state = stateOf(event, now);
+
+            const when = event.allDay
+              ? 'all day'
+              : timeText(event.start) + ' – ' + timeText(event.end);
+
+            return (
+              '<div class="cal-block is-' + state + '" style="width: ' + width + 'px" ' +
+              'title="' + escapeHtml(when + '  ·  ' + event.summary) + '">' +
+              '<span class="cal-block-time">' + escapeHtml(when) + '</span>' +
+              '<span class="cal-block-title">' + escapeHtml(event.summary) + '</span>' +
+              '</div>'
+            );
+          })
+          .join('');
       }
 
-      function escapeHtml(text) {
-        return String(text)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
+      /*
+       * The next event about to start, if it is close enough to be worth saying so.
+       *
+       * Always about today, whichever day is selected: it is a warning, not part of
+       * what you are browsing. It only shows while this panel is open, which is the
+       * honest limit of a popup — see the note in the pack notes about wanting this
+       * in the bar itself.
+       */
+      function renderUpNext() {
+        const now = new Date();
+        const limit = new Date(now.getTime() + WARN_MINUTES * 60000);
+
+        const soon = events
+          .filter(event => !event.allDay && event.start > now && event.start <= limit)
+          .sort((a, b) => a.start - b.start)[0];
+
+        if (!soon) {
+          el.upnext.hidden = true;
+          return;
+        }
+
+        const minutes = Math.max(1, Math.round((soon.start - now) / 60000));
+
+        el.upnext.hidden = false;
+        el.upnext.innerHTML =
+          '<i class="nf nf-md-bell_ring"></i>' +
+          '<span class="cal-upnext-body">' +
+          '<span class="cal-upnext-when">in ' + minutes + ' min · ' + timeText(soon.start) + '</span>' +
+          '<span class="cal-upnext-title">' + escapeHtml(soon.summary) + '</span>' +
+          '</span>';
+      }
+
+      function render() {
+        renderMonth();
+        renderDay();
+        renderUpNext();
       }
 
       el.days.addEventListener('click', event => {
@@ -263,8 +341,7 @@
       /*
        * Events come from scripts/calendar.ps1, which fetches the iCal feeds listed
        * in ~/.glzr/calendar-feeds.txt. With no feeds configured the script prints
-       * nothing and this is a plain month view — which is the whole panel for anyone
-       * who does not want to hand it a calendar.
+       * nothing and this is a plain month view.
        */
       let icsText = null;
 
@@ -306,6 +383,17 @@
       renderWeekdays();
       render();
       loadEvents();
+
+      /*
+       * Redrawn every half minute: what counts as past, happening and still to come
+       * moves on its own, and so does the countdown on the warning.
+       */
+      const ticking = setInterval(() => {
+        renderDay();
+        renderUpNext();
+      }, 30000);
+
+      window.addEventListener('beforeunload', () => clearInterval(ticking));
 
       /* Closing is done from outside, by the helper the bar starts when it opens
          this panel (see window-ctl.ps1). Escape here is a bonus. */

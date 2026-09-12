@@ -787,9 +787,147 @@ body.is-floating #root {
 }
 
 /*
- * Calendar panel (see calendar-panel.html). Six week rows always, so the panel
- * does not change height as the months change.
+ * Calendar panel (see calendar-panel.html). Month on the left, the selected day on
+ * the right. Six week rows always, so the panel does not change height as the
+ * months change.
  */
+.cal-body {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.cal-month {
+  flex: 0 0 238px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The day gets the rest, which is most of it: blocks along a line need width in a
+   way a month grid does not. */
+.cal-day-view {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-left: 1px solid rgb(255 255 255 / 8%);
+  padding-left: 14px;
+  align-self: stretch;
+}
+
+.cal-day-title {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+/*
+ * The day's events as blocks running left to right, wrapping when they run out of
+ * room. Width follows duration, so a half hour reads as narrower than an
+ * afternoon, and the gaps between blocks are the free time.
+ */
+.cal-blocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-content: flex-start;
+}
+
+.cal-blocks-empty {
+  font-size: 12px;
+  opacity: 0.45;
+}
+
+.cal-block {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border-left: 2px solid currentColor;
+  background: rgb(255 255 255 / 7%);
+  overflow: hidden;
+}
+
+.cal-block-time {
+  font-size: 10px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-block-title {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Over and done with: still there, but not asking for attention. */
+.cal-block.is-past {
+  color: rgb(255 255 255 / 40%);
+  background: rgb(255 255 255 / 4%);
+}
+
+/* Happening now, the one thing on the panel worth the accent. */
+.cal-block.is-now {
+  color: #fff;
+  background: rgb(75 115 255 / 45%);
+  border-left-color: #8fb4ff;
+}
+
+.cal-block.is-future {
+  color: #fff;
+}
+
+/*
+ * The warning about something about to start. Sits above the day, and only appears
+ * inside the last quarter of an hour before an event.
+ */
+.cal-upnext {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: rgb(255 196 107 / 18%);
+  border: 1px solid rgb(255 196 107 / 45%);
+}
+
+.cal-upnext i {
+  margin-right: 0;
+  color: #ffc46b;
+}
+
+.cal-upnext-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.cal-upnext-when {
+  font-size: 10px;
+  color: #ffc46b;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cal-upnext-title {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -852,43 +990,6 @@ body.is-floating #root {
   opacity: 0.7;
 }
 
-.cal-agenda {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.cal-agenda-day {
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  opacity: 0.55;
-}
-
-.cal-agenda-empty {
-  font-size: 12px;
-  opacity: 0.5;
-}
-
-.cal-event {
-  display: flex;
-  gap: 8px;
-  font-size: 12px;
-  align-items: baseline;
-}
-
-.cal-event-time {
-  flex: 0 0 62px;
-  opacity: 0.7;
-  font-variant-numeric: tabular-nums;
-}
-
-.cal-event-title {
-  flex: 1;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 
 /* The month arrows reuse the panel close button's shape. */
 .calendar-panel .panel-header .panel-close {
