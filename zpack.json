@@ -406,7 +406,7 @@
       "htmlPath": "./media-panel.html",
       "zOrder": "top_most",
       "shownInTaskbar": false,
-      "focused": false,
+      "focused": true,
       "resizable": false,
       "transparent": true,
       "includeFiles": [
@@ -464,7 +464,7 @@
       "htmlPath": "./controls-panel.html",
       "zOrder": "top_most",
       "shownInTaskbar": false,
-      "focused": false,
+      "focused": true,
       "resizable": false,
       "transparent": true,
       "includeFiles": [
@@ -527,7 +527,7 @@
       "htmlPath": "./storage-panel.html",
       "zOrder": "top_most",
       "shownInTaskbar": false,
-      "focused": false,
+      "focused": true,
       "resizable": false,
       "transparent": true,
       "includeFiles": [
@@ -585,7 +585,7 @@
       "htmlPath": "./about-panel.html",
       "zOrder": "top_most",
       "shownInTaskbar": false,
-      "focused": false,
+      "focused": true,
       "resizable": false,
       "transparent": true,
       "includeFiles": [
@@ -611,11 +611,11 @@
       "presets": [
         {
           "name": "primary",
-          "anchor": "top_left",
-          "offsetX": "8px",
-          "offsetY": "44px",
-          "width": "360px",
-          "height": "360px",
+          "anchor": "center",
+          "offsetX": "0px",
+          "offsetY": "0px",
+          "width": "460px",
+          "height": "420px",
           "monitorSelection": {
             "type": "primary"
           },
@@ -627,11 +627,11 @@
         },
         {
           "name": "secondary",
-          "anchor": "top_left",
-          "offsetX": "8px",
-          "offsetY": "44px",
-          "width": "360px",
-          "height": "360px",
+          "anchor": "center",
+          "offsetX": "0px",
+          "offsetY": "0px",
+          "width": "460px",
+          "height": "420px",
           "monitorSelection": {
             "type": "secondary"
           },
