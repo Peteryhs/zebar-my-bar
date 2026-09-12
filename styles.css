@@ -15,8 +15,11 @@
 @import 'assets/icons.css';
 
 :root {
-  --text-size: 12px;
-  --icon-size: 12px;
+  /* Sized against a 42px bar: the readings carry the bar rather than sitting in
+     the middle of it. Icons run a shade larger than the text, because a glyph at
+     the same nominal size reads smaller than a digit next to it. */
+  --text-size: 14px;
+  --icon-size: 16px;
 
   /* Text is always white, so the bar background stays dark in both
      colour schemes (a light background would hide white text). */
@@ -227,8 +230,8 @@ body.is-floating #root {
  */
 .clickable {
   cursor: pointer;
-  padding: 3px 6px;
-  border-radius: 5px;
+  padding: 4px 7px;
+  border-radius: 6px;
   transition: background 120ms ease;
 }
 
@@ -244,7 +247,16 @@ body.is-floating #root {
  * Popup panel (see battery-panel.html). Share the bar's palette, but as a
  * free-floating card instead of a strip.
  */
+/*
+ * Panels keep the smaller type. The bar's sizes are set for a strip you read at a
+ * glance from across the desk; a panel is a page of readings you are already
+ * looking at, and its own rules (.panel-row, .system-line) are written against
+ * 12px. Scaling those up is a separate decision from scaling the bar.
+ */
 .panel-body {
+  --text-size: 12px;
+  --icon-size: 12px;
+
   background: transparent;
 }
 
@@ -572,7 +584,7 @@ body.is-floating #root {
 
 /* Long track titles must not push the other tiles around. */
 .media-text {
-  max-width: 190px;
+  max-width: 210px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

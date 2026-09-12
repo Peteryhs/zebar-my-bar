@@ -34,7 +34,7 @@ param(
   [Parameter(Mandatory = $true)][ValidateSet('close', 'watch', 'guard')][string]$Action,
   [Parameter(Mandatory = $true)][string]$Match,
   [string]$Owner = 'default',
-  [string]$BarMatch = '',
+
   [int]$TickMs = 100,
   [int]$ScanMs = 300,
   [int]$FindTimeoutMs = 8000,
@@ -83,11 +83,6 @@ $matchNames = @($Match -split ',' |
   ForEach-Object { $_.Trim() } |
   Where-Object { $_ -ne '' })
 
-# The bar's own window, if the caller named it. A click on the bar is not a
-# dismissal: the bar decides what a click on the bar means.
-$barNames = @($BarMatch -split ',' |
-  ForEach-Object { $_.Trim() } |
-  Where-Object { $_ -ne '' })
 
 function Write-Trace([string]$message) {
   try {
@@ -160,35 +155,7 @@ function Get-TargetWindows {
   return Get-WindowsMatching $matchNames
 }
 
-function Get-BarRects {
-  $rects = New-Object System.Collections.ArrayList
 
-  foreach ($handle in (Get-WindowsMatching $barNames)) {
-    $rect = New-Object ZebarWin.Native+RECT
-
-    if ([ZebarWin.Native]::GetWindowRect([System.IntPtr]$handle, [ref]$rect)) {
-      [void]$rects.Add($rect)
-    }
-  }
-
-  return $rects
-}
-
-function Test-PointerOverBar($rects) {
-  if ($rects.Count -eq 0) { return $false }
-
-  $point = New-Object ZebarWin.Native+POINT
-  [void][ZebarWin.Native]::GetCursorPos([ref]$point)
-
-  foreach ($rect in $rects) {
-    if ($point.X -ge $rect.Left -and $point.X -lt $rect.Right -and
-        $point.Y -ge $rect.Top -and $point.Y -lt $rect.Bottom) {
-      return $true
-    }
-  }
-
-  return $false
-}
 
 function Get-WindowName($handle) {
   $title = New-Object System.Text.StringBuilder 512
@@ -319,7 +286,6 @@ if ($Action -eq 'guard') {
   # A closed window can linger for a moment, so remember what we just closed to
   # avoid attaching to it again on the next scan.
   $recentlyClosed = @{}
-  $barRects = Get-BarRects
   $tick = 0
   $lifeDeadline = (Get-Date).AddMinutes($MaxLifetimeMinutes)
 
@@ -399,24 +365,19 @@ if ($Action -eq 'guard') {
 
         $reason = $null
 
+        # Any click outside the panel dismisses it, the bar included.
+        #
+        # For a while the bar was excluded, so that a click on a tile belonged to
+        # the bar alone and could not be acted on twice. It made things worse: the
+        # bar's half of that arrangement depends on the click arriving in its page,
+        # and on the bar's empty areas it did not arrive at all, so nothing closed.
+        # Detecting the click here does not depend on which window has the focus,
+        # or on an event surviving its way through a document.
+        #
+        # The bar copes with being second: it remembers that a panel was closed a
+        # moment ago, so the click it is handling closes rather than reopens.
         if ($clicked -and -not (Test-PointerInsideWindow $entry.Handle)) {
-          # A click on the bar is not a dismissal, even though the bar is
-          # outside this window.
-          #
-          # It used to be, and it fought the bar for the same click: the guard
-          # closed the panel and reported it closed, the bar read that report and
-          # so believed nothing was open, and the click it was handling therefore
-          # opened the panel again. The panel shut and reopened inside a couple of
-          # hundred milliseconds, which looks exactly like a click that did
-          # nothing, and closing anything took two of them.
-          #
-          # One owner per click: the bar decides what a click on the bar means and
-          # says so on the guard's stdin. Everywhere else is the guard's.
-          if (Test-PointerOverBar $barRects) {
-            Write-Trace ('guard ignored click name={0} reason=on-bar' -f $entry.Name)
-          } else {
-            $reason = 'click-outside'
-          }
+          $reason = 'click-outside'
         }
 
         # Click outside is the only dismissal, deliberately. Focus based rules
@@ -442,8 +403,7 @@ if ($Action -eq 'guard') {
 
       # Re-read on the same cadence as the panel scan: the bar is docked and does
       # not move, but it is recreated on every reload of the pack.
-      $barRects = Get-BarRects
-
+    
       # Forget closures older than a few seconds.
       foreach ($key in @($recentlyClosed.Keys)) {
         if (($now - $recentlyClosed[$key]).TotalSeconds -gt 5) {

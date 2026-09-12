@@ -120,7 +120,24 @@
         'windows-menu',
         'weather-panel',
       ];
-      const panels = new Map(PANEL_NAMES.map(name => [name, { open: false }]));
+      const panels = new Map(
+        PANEL_NAMES.map(name => [name, { open: false, closedAt: 0 }]),
+      );
+
+      /*
+       * How long a panel counts as "just closed".
+       *
+       * The guard dismisses a panel on any click outside it, which includes the
+       * click on the tile that opened it. That close is reported here, and the
+       * report can land in the gap between the mouse going down and the click
+       * handler running, on a click held for more than a moment. Without this the
+       * handler would see nothing open and reopen the panel with the same click
+       * that just dismissed it, which is what made closing take two clicks.
+       *
+       * Long enough to cover a slow click, short enough that deliberately
+       * reopening a panel straight after closing it still works.
+       */
+      const JUST_CLOSED_MS = 350;
 
       let panelGuard = null;
       let guardStarting = null;
@@ -141,10 +158,6 @@
             PANEL_NAMES.join(','),
             '-Owner',
             monitor.owner,
-            // So the guard can tell a click on the bar from a click somewhere
-            // else. Clicks on the bar are handled here, and only here.
-            '-BarMatch',
-            zebar.currentWidget().name,
           ]);
 
           guard.onStdout(line => {
@@ -152,8 +165,13 @@
             const state = panels.get(name);
 
             if (!state) return;
+
             if (event === 'open') state.open = true;
-            if (event === 'closed' || event === 'gone') state.open = false;
+
+            if (event === 'closed' || event === 'gone') {
+              state.open = false;
+              state.closedAt = Date.now();
+            }
           });
 
           guard.onStderr(line => console.warn('panel guard:', line));
@@ -178,8 +196,20 @@
         return guardStarting;
       }
 
+      /*
+       * One-off closer for a single panel, used as a backstop when the tile of an
+       * open panel is clicked. The guard normally gets there first.
+       *
+       * Never called with more than one name: a broad close takes a couple of
+       * hundred milliseconds to start, by which time the panel the user actually
+       * asked for is open and matches it too.
+       *
+       * Not the guard's stdin, which would be cheaper and does not work: zebar's
+       * shellWrite resolves without delivering, so the write looks fine from here
+       * and the guard never sees a line. Its trace file has no record of a single
+       * command, which is what gave that away.
+       */
       async function closeWidget(name) {
-        // Fallback for when the guard is not available: one-off closer.
         await zebar
           .shellExec('powershell.exe', [
             '-NoProfile',
@@ -248,12 +278,31 @@
        */
       async function toggleWidget(name) {
         const state = panels.get(name);
-        const wasOpen = state.open;
+        const justClosed = Date.now() - state.closedAt < JUST_CLOSED_MS;
 
-        closeAllPanels();
+        if (state.open || justClosed) {
+          // This click was a dismissal. The guard has already closed the panel,
+          // or is a few milliseconds from doing so; asking again is only for the
+          // case where the guard is not running.
+          if (state.open) {
+            state.open = false;
+            state.closedAt = Date.now();
+            closeWidget(name);
+          }
 
-        if (wasOpen) return;
+          return;
+        }
 
+        /*
+         * Switching panels does not close the old one from here. The guard closes
+         * it, both because the click was outside it and because it retires the
+         * previous panel when a new one appears.
+         *
+         * The bar used to send a close for every panel name at this point, which
+         * arrived a few hundred milliseconds later — after the new panel had
+         * opened, and matching its name too. It closed the panel it had just
+         * asked for.
+         */
         state.open = true;
         startPanelGuard();
 
@@ -261,54 +310,6 @@
           packId: zebar.currentWidget().packId,
         });
       }
-
-      /*
-       * Closing goes through a one-shot window-ctl, not through the guard.
-       *
-       * The guard takes commands on stdin and the bar used to send them there,
-       * which was cheaper: no process to start. It never worked. Zebar's
-       * shellWrite resolves without delivering anything, so the write looked
-       * successful from here, the guard never saw a line, and every close the bar
-       * asked for silently did not happen. The guard's own trace file has no
-       * record of a single command in months of use, which is what gave it away.
-       *
-       * Not awaited: the process takes a couple of hundred milliseconds to start
-       * and the click has better things to do.
-       */
-      function closeAllPanels() {
-        if (![...panels.values()].some(one => one.open)) return;
-
-        panels.forEach(one => {
-          one.open = false;
-        });
-
-        closeWidget(PANEL_NAMES.join(','));
-      }
-
-      /*
-       * The guard does not dismiss a panel when the click landed on the bar, so
-       * the bar has to: a click on a part of the bar that does nothing (the
-       * clock, the gaps between tiles) still closes whatever is open, the way it
-       * did when the guard treated the bar as just another elsewhere.
-       *
-       * `click` in the capture phase, not `mousedown`. The first attempt at this
-       * used mousedown and never fired once, while the tiles beside it worked
-       * throughout, so something in the page is having that event first. Capture
-       * runs before anything can stop propagation, and click is the event the
-       * tiles are already proving arrives.
-       *
-       * Tiles are excluded because their own handler decides: toggleWidget knows
-       * whether that tile's panel is the one already open.
-       */
-      window.addEventListener(
-        'click',
-        event => {
-          if (event.target.closest('.clickable')) return;
-
-          closeAllPanels();
-        },
-        true,
-      );
 
       // Start the guard now instead of on the first click, so even the first
       // panel is watched from the moment it appears.
