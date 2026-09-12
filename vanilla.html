@@ -5,8 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <!-- Custom styles. -->
+    <!--
+      styles.css @imports the icon font stylesheet, which in turn asks for the
+      woff2: three requests discovered one after another, with the icon glyphs
+      not drawn until the last one lands. Preloading starts all three at once.
+    -->
+    <link rel="preload" href="./assets/nerdfonts.css" as="style" />
+    <link rel="preload" href="./assets/nerdfont.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" type="text/css" href="./styles.css" />
-
     <!-- Allows React to be run buildless via "text/babel" script below. -->
     <script
       src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"
@@ -36,7 +42,6 @@
         date: { type: 'date', formatting: 'EEE d MMM t' },
         battery: { type: 'battery' },
         memory: { type: 'memory' },
-        weather: { type: 'weather' },
         media: { type: 'media' },
         audio: { type: 'audio' },
         disk: { type: 'disk', refreshInterval: 60000 },
@@ -226,20 +231,34 @@
         panelPreset = info.preset;
       });
 
+      /*
+       * One panel at a time. Clicking a tile closes whatever is open and then
+       * opens the one asked for; clicking the tile of the panel that is already
+       * open just closes it.
+       *
+       * The close is not awaited. Writing a line to the guard is what starts it,
+       * and the guard fades the old window out on its own thread, so the new
+       * panel is asked for in the same tick as the click instead of waiting on an
+       * animation somewhere else.
+       */
       async function toggleWidget(name) {
         const state = panels.get(name);
+        const wasOpen = state.open;
+        const anyOpen = [...panels.values()].some(one => one.open);
 
-        if (state.open) {
-          state.open = false;
+        panels.forEach(one => {
+          one.open = false;
+        });
 
+        if (anyOpen) {
           if (panelGuard) {
-            panelGuard.write(`close ${name}\n`);
+            panelGuard.write('close all\n');
           } else {
-            await closeWidget(name);
+            await closeWidget(PANEL_NAMES.join(','));
           }
-
-          return;
         }
+
+        if (wasOpen) return;
 
         state.open = true;
         startPanelGuard();
@@ -257,14 +276,45 @@
 
       function App() {
         const [output, setOutput] = useState(providers.outputMap);
-        const [errors, setErrors] = useState({});
         // Remembered while nothing is playing, so the tile still shows the last
         // thing that played instead of disappearing.
         const [lastTrack, setLastTrack] = useState(null);
+        const [weather, setWeather] = useState(null);
+        const [weatherIcon, setWeatherIcon] = useState(null);
 
         useEffect(() => {
           providers.onOutput(() => setOutput(providers.outputMap));
-          providers.onError(map => setErrors({ ...map }));
+        }, []);
+
+        /*
+         * Weather does not come from a zebar provider. The provider geolocates
+         * through ipinfo.io and when that request failed the output went null,
+         * the tile vanished and the only trace was an error. assets/weather.js
+         * remembers the coordinates, retries on a widening delay and reports
+         * nothing when it cannot get a reading, so a bad network shows an empty
+         * space rather than a complaint.
+         *
+         * Imported by URL rather than by a bare relative path: this script is
+         * compiled in the page by Babel, and a relative specifier does not
+         * resolve against the document from inside the module it produces.
+         */
+        useEffect(() => {
+          let stop = null;
+          let cancelled = false;
+
+          import(new URL('assets/weather.js', document.baseURI).href)
+            .then(module => {
+              if (cancelled) return;
+
+              setWeatherIcon(() => module.weatherIcon);
+              stop = module.startWeather({ onUpdate: setWeather });
+            })
+            .catch(err => console.warn('weather unavailable:', err));
+
+          return () => {
+            cancelled = true;
+            if (stop) stop();
+          };
         }, []);
 
         const currentSession = output.media?.currentSession || null;
@@ -315,35 +365,7 @@
           return <i className="nf nf-fa-battery_0"></i>;
         }
 
-        // Get icon to show for current weather status.
-        function getWeatherIcon(weatherOutput) {
-          switch (weatherOutput.status) {
-            case 'clear_day':
-              return <i className="nf nf-weather-day_sunny"></i>;
-            case 'clear_night':
-              return <i className="nf nf-weather-night_clear"></i>;
-            case 'cloudy_day':
-              return <i className="nf nf-weather-day_cloudy"></i>;
-            case 'cloudy_night':
-              return <i className="nf nf-weather-night_alt_cloudy"></i>;
-            case 'light_rain_day':
-              return <i className="nf nf-weather-day_sprinkle"></i>;
-            case 'light_rain_night':
-              return <i className="nf nf-weather-night_alt_sprinkle"></i>;
-            case 'heavy_rain_day':
-              return <i className="nf nf-weather-day_rain"></i>;
-            case 'heavy_rain_night':
-              return <i className="nf nf-weather-night_alt_rain"></i>;
-            case 'snow_day':
-              return <i className="nf nf-weather-day_snow"></i>;
-            case 'snow_night':
-              return <i className="nf nf-weather-night_alt_snow"></i>;
-            case 'thunder_day':
-              return <i className="nf nf-weather-day_lightning"></i>;
-            case 'thunder_night':
-              return <i className="nf nf-weather-night_alt_lightning"></i>;
-          }
-        }
+        const nowWeather = weather?.current || null;
 
         return (
           <div className="app">
@@ -378,17 +400,7 @@
 
             </div>
 
-            <div className="center">
-              {output.date?.formatted}
-              {/* Temporary: provider errors are why a tile disappears. */}
-              {Object.entries(errors)
-                .filter(([, err]) => err)
-                .map(([name, err]) => (
-                  <span className="provider-error" key={name}>
-                    {name}: {JSON.stringify(err).slice(0, 70)}
-                  </span>
-                ))}
-            </div>
+            <div className="center">{output.date?.formatted}</div>
 
             <div className="right">
               {(output.cpu || output.memory) && (
@@ -457,14 +469,24 @@
                 </div>
               )}
 
-              {output.weather && (
+              {/* No reading means no tile: never an error where a temperature
+                  should be. */}
+              {nowWeather && weatherIcon && (
                 <div
                   className="weather clickable"
                   onClick={() => toggleWidget('weather-panel')}
-                  title="Forecast"
+                  title={'Forecast' + (weather.place ? ' · ' + weather.place : '')}
                 >
-                  {getWeatherIcon(output.weather)}
-                  {Math.round(output.weather.celsiusTemp)}°C
+                  <i
+                    className={
+                      'nf ' +
+                      weatherIcon(
+                        nowWeather.weather_code,
+                        nowWeather.is_day === 1,
+                      )
+                    }
+                  ></i>
+                  {Math.round(nowWeather.temperature_2m)}°C
                 </div>
               )}
             </div>

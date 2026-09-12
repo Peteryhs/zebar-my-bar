@@ -4,8 +4,28 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
+    <!--
+      styles.css @imports the icon font stylesheet, which in turn asks for the
+      woff2: three requests discovered one after another, with the icon glyphs
+      not drawn until the last one lands. Preloading starts all three at once.
+    -->
+    <link rel="preload" href="./assets/nerdfonts.css" as="style" />
+    <link rel="preload" href="./assets/nerdfont.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" type="text/css" href="./styles.css" />
-  </head>
+    <!--
+      The zebar client module and its dependencies are vendored (assets/vendor),
+      for the same reason the icon font is: a panel is a fresh webview every time
+      it opens, and importing the module graph from a CDN put three round trips
+      in front of the first paint. Preloading them here starts all seven files at
+      once instead of discovering each one after the previous has parsed.
+    -->
+    <link rel="modulepreload" href="./assets/vendor/zebar.js" />
+    <link rel="modulepreload" href="./assets/vendor/zod.js" />
+    <link rel="modulepreload" href="./assets/vendor/luxon.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-core.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-event.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-window.js" />
+    <link rel="modulepreload" href="./assets/vendor/glazewm.js" />  </head>
   <body class="panel-body">
     <div class="panel system-panel">
       <div class="panel-header">
@@ -40,7 +60,7 @@
     </div>
 
     <script type="module">
-      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+      import * as zebar from './assets/vendor/zebar.js';
 
       const widget = zebar.currentWidget();
 

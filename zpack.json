@@ -23,11 +23,22 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,
-        "rules": []
+        "rules": [
+          {
+            "urlRegex": "api\\.open-meteo\\.com",
+            "duration": 900
+          },
+          {
+            "urlRegex": "ipinfo\\.io",
+            "duration": 86400
+          }
+        ]
       },
       "privileges": {
         "shellCommands": [
@@ -68,7 +79,9 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,
@@ -108,7 +121,9 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,
@@ -148,7 +163,9 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,
@@ -204,7 +221,9 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,
@@ -269,7 +288,9 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,
@@ -277,6 +298,10 @@
           {
             "urlRegex": "api\\.open-meteo\\.com",
             "duration": 900
+          },
+          {
+            "urlRegex": "ipinfo\\.io",
+            "duration": 86400
           }
         ]
       },
@@ -330,7 +355,9 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,
@@ -386,7 +413,9 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,
@@ -442,7 +471,9 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,
@@ -503,7 +534,9 @@
         "*.html",
         "*.css",
         "assets/*",
-        "*.woff2"
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
       ],
       "caching": {
         "defaultDuration": 604800,

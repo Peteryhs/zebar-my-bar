@@ -200,14 +200,6 @@ body.is-floating #root {
   color: #ff5c7a;
 }
 
-/* Temporary: shown while a provider is erroring, so a missing tile explains
-   itself instead of vanishing silently. */
-.provider-error {
-  margin-left: 12px;
-  color: #ff7a7a;
-  font-size: 11px;
-}
-
 .battery {
   position: relative;
 }

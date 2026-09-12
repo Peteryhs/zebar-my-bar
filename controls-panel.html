@@ -4,7 +4,28 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
+    <!--
+      styles.css @imports the icon font stylesheet, which in turn asks for the
+      woff2: three requests discovered one after another, with the icon glyphs
+      not drawn until the last one lands. Preloading starts all three at once.
+    -->
+    <link rel="preload" href="./assets/nerdfonts.css" as="style" />
+    <link rel="preload" href="./assets/nerdfont.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" type="text/css" href="./styles.css" />
+    <!--
+      The zebar client module and its dependencies are vendored (assets/vendor),
+      for the same reason the icon font is: a panel is a fresh webview every time
+      it opens, and importing the module graph from a CDN put three round trips
+      in front of the first paint. Preloading them here starts all seven files at
+      once instead of discovering each one after the previous has parsed.
+    -->
+    <link rel="modulepreload" href="./assets/vendor/zebar.js" />
+    <link rel="modulepreload" href="./assets/vendor/zod.js" />
+    <link rel="modulepreload" href="./assets/vendor/luxon.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-core.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-event.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-window.js" />
+    <link rel="modulepreload" href="./assets/vendor/glazewm.js" />
   </head>
   <body class="panel-body">
     <div class="panel controls-panel">
@@ -54,10 +75,9 @@
     </div>
 
     <script type="module">
-      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+      import * as zebar from './assets/vendor/zebar.js';
 
       const widget = zebar.currentWidget();
-
 
       const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
       const brightnessScript = `${packDir}\\scripts\\brightness.ps1`;
@@ -86,23 +106,6 @@
         return 'nf-md-volume_high';
       }
 
-      /**
-       * Runs the brightness script. Same program and shape as the bar's other
-       * helpers, so one privilege entry covers it.
-       */
-      async function shellScript(script, args) {
-        const output = await zebar.shellExec('powershell.exe', [
-          '-NoProfile',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          script,
-          ...args,
-        ]);
-
-        return (output.stdout || '').trim();
-      }
-
       function renderAudio() {
         if (!device) return;
 
@@ -126,9 +129,11 @@
       });
 
       /*
-       * Volume follows the slider while it is dragged, not on release. Only one
-       * call is in flight at a time and the newest value wins, so a fast drag
-       * cannot queue up a backlog of changes.
+       * Volume follows the slider while it is dragged, not on release. The call
+       * goes straight into Zebar, so it is dispatched on every `input` event
+       * without waiting for the previous one to come back: the newest value is
+       * the only one that matters, and an in-flight call must not hold up the
+       * pointer.
        */
       let volumeInFlight = false;
       let pendingVolume = null;
@@ -160,8 +165,15 @@
 
       el.slider.addEventListener('input', () => {
         draggingVolume = true;
-        el.value.textContent = el.slider.value + '%';
-        pushVolume(Number(el.slider.value));
+        const volume = Number(el.slider.value);
+
+        // Draw first, so the readout tracks the pointer even if the call behind
+        // it is slow.
+        el.value.textContent = volume + '%';
+        el.icon.className =
+          'nf ' + volumeIcon(volume, device ? device.isMuted : false);
+
+        pushVolume(volume);
       });
 
       el.slider.addEventListener('change', () => {
@@ -172,75 +184,152 @@
         if (!device) return;
 
         try {
-          await audio.output.setMute(!device.isMuted, { deviceId: device.deviceId });
+          await audio.output.setMute(!device.isMuted, {
+            deviceId: device.deviceId,
+          });
         } catch (error) {
           el.device.textContent = 'Failed: ' + (error?.message || error);
         }
       });
 
-      async function refreshBrightness(setTo) {
-        try {
-          const raw = await shellScript(
-            brightnessScript,
-            setTo === undefined ? ['-Action', 'get'] : ['-Action', 'set', '-Value', String(setTo)],
-          );
-          const level = Number(raw);
+      /*
+       * Brightness goes through one long lived PowerShell (brightness.ps1
+       * -Action serve) instead of a process per step. Starting a process and
+       * resolving the WMI classes cost a few hundred milliseconds each time,
+       * which is what made the brightness slider lag behind the pointer while
+       * the volume slider kept up. Here a step is a line on a pipe.
+       */
+      let brightnessServer = null;
+      let draggingBrightness = false;
+      let brightnessSupported = true;
 
-          if (!isFinite(level) || level < 0) {
-            el.brightnessValue.textContent = 'n/a';
-            el.brightnessNote.textContent = 'This panel has no software brightness control.';
-            el.brightnessSlider.disabled = true;
+      function markUnsupported() {
+        brightnessSupported = false;
+        el.brightnessValue.textContent = 'n/a';
+        el.brightnessSlider.disabled = true;
+        el.brightnessNote.textContent =
+          'This panel has no software brightness control.';
+      }
+
+      function showBrightness(level) {
+        el.brightnessValue.textContent = level + '%';
+        el.brightnessNote.textContent = '';
+        el.brightnessIcon.className =
+          'nf ' + (level > 60 ? 'nf-md-brightness_7' : 'nf-md-brightness_5');
+
+        if (!draggingBrightness) el.brightnessSlider.value = String(level);
+      }
+
+      async function startBrightnessServer() {
+        const server = await zebar.shellSpawn('powershell.exe', [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          brightnessScript,
+          '-Action',
+          'serve',
+        ]);
+
+        server.onStdout(line => {
+          const text = line.trim();
+
+          if (text === 'unsupported') {
+            markUnsupported();
             return;
           }
 
-          el.brightnessValue.textContent = level + '%';
-          el.brightnessSlider.value = String(level);
-          el.brightnessNote.textContent = '';
-          el.brightnessIcon.className =
-            'nf ' + (level > 60 ? 'nf-md-brightness_7' : 'nf-md-brightness_5');
-        } catch (error) {
-          el.brightnessValue.textContent = 'n/a';
-          el.brightnessNote.textContent = 'Brightness script failed: ' + (error?.message || error);
-        }
+          // "set failed" and anything else non-numeric is ignored on purpose:
+          // the slider is where the user is looking and it already shows the
+          // value they asked for.
+          const level = Number(text);
+          if (Number.isFinite(level) && level >= 0) showBrightness(level);
+        });
+
+        server.onStderr(line => console.warn('brightness:', line));
+
+        server.onExit(() => {
+          brightnessServer = null;
+        });
+
+        brightnessServer = server;
       }
 
       /*
-       * Brightness also follows the slider, but every change starts a PowerShell
-       * process, so changes are coalesced: one in flight, newest value wins.
+       * Fallback for when the server could not be started: one process per
+       * change, coalesced so a drag cannot queue up a backlog.
        */
-      let brightnessInFlight = false;
-      let pendingBrightness = null;
+      let fallbackInFlight = false;
+      let pendingFallback = null;
 
-      async function pushBrightness(level) {
-        el.brightnessValue.textContent = level + '%';
-
-        if (brightnessInFlight) {
-          pendingBrightness = level;
+      async function pushBrightnessFallback(level) {
+        if (fallbackInFlight) {
+          pendingFallback = level;
           return;
         }
 
-        brightnessInFlight = true;
+        fallbackInFlight = true;
 
         try {
-          await shellScript(brightnessScript, ['-Action', 'set', '-Value', String(level)]);
+          await zebar.shellExec('powershell.exe', [
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            brightnessScript,
+            '-Action',
+            'set',
+            '-Value',
+            String(level),
+          ]);
         } catch (error) {
-          el.brightnessNote.textContent = 'Brightness failed: ' + (error?.message || error);
+          console.warn('brightness fallback failed:', error);
         } finally {
-          brightnessInFlight = false;
+          fallbackInFlight = false;
         }
 
-        if (pendingBrightness !== null) {
-          const next = pendingBrightness;
-          pendingBrightness = null;
-          pushBrightness(next);
+        if (pendingFallback !== null) {
+          const next = pendingFallback;
+          pendingFallback = null;
+          pushBrightnessFallback(next);
         }
       }
 
       el.brightnessSlider.addEventListener('input', () => {
-        pushBrightness(Number(el.brightnessSlider.value));
+        if (!brightnessSupported) return;
+
+        draggingBrightness = true;
+        const level = Number(el.brightnessSlider.value);
+
+        // Draw first, then send. The readout never waits on the panel hardware.
+        el.brightnessValue.textContent = level + '%';
+        el.brightnessIcon.className =
+          'nf ' + (level > 60 ? 'nf-md-brightness_7' : 'nf-md-brightness_5');
+
+        if (brightnessServer) {
+          brightnessServer.write(level + '\n');
+        } else {
+          pushBrightnessFallback(level);
+        }
       });
 
-      refreshBrightness();
+      el.brightnessSlider.addEventListener('change', () => {
+        draggingBrightness = false;
+      });
+
+      startBrightnessServer().catch(error => {
+        console.warn('brightness server failed to start:', error);
+        el.brightnessNote.textContent = '';
+      });
+
+      /*
+       * Shell first, close after: closing the widget destroys this page and its
+       * JS context, so the server has to be told to go before that happens. It
+       * also idles out on its own if this never runs.
+       */
+      window.addEventListener('beforeunload', () => {
+        if (brightnessServer) brightnessServer.kill();
+      });
 
       /* Closing is done from outside, by the helper the bar starts when it opens
          this panel (see window-ctl.ps1). Escape here is a bonus. */

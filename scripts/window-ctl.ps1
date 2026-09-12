@@ -396,6 +396,22 @@ if ($Action -eq 'guard') {
         }
 
         $name = Get-WindowName ([int64]$handle)
+
+        # One panel at a time. The bar also closes the open panel before it opens
+        # the next one, which is what makes the swap look immediate, but the rule
+        # belongs here too: this is the only place that sees panels opened any
+        # other way (the start-widget-preset command line, a second bar), and a
+        # click that lands on another tile can arrive before the bar has finished
+        # sending its close.
+        foreach ($other in @($active)) {
+          Close-Window $other.Handle
+          $recentlyClosed[[string]$other.Handle] = $now
+          Write-Event ('closed {0}' -f $other.Name)
+          Write-Trace ('guard closed name={0} reason=replaced-by-{1}' -f $other.Name, $name)
+        }
+
+        $active = @()
+
         $active += [PSCustomObject]@{
           Name         = $name
           Handle       = [int64]$handle
