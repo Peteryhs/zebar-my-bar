@@ -1,0 +1,6 @@
+# The backup the sync script writes once into the running copy, not part of the pack.
+zpack.json.bak
+
+# Anything ending .local is yours and not the pack's.
+*.local
+*.local.*

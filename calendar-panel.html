@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <link rel="preload" href="./assets/icons.css" as="style" />
+    <link rel="preload" href="./assets/nerdfont.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+
+    <link rel="modulepreload" href="./assets/vendor/zebar.js" />
+    <link rel="modulepreload" href="./assets/vendor/zod.js" />
+    <link rel="modulepreload" href="./assets/vendor/luxon.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-core.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-event.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-window.js" />
+    <link rel="modulepreload" href="./assets/vendor/glazewm.js" />
+  </head>
+  <body class="panel-body">
+    <div class="panel calendar-panel">
+      <div class="panel-header">
+        <i class="nf nf-md-calendar_month"></i>
+        <span class="panel-title" id="month-title">Calendar</span>
+        <button class="panel-close" id="previous" title="Previous month">
+          <i class="nf nf-md-chevron_left"></i>
+        </button>
+        <button class="panel-close" id="today" title="Today">
+          <i class="nf nf-md-circle_small"></i>
+        </button>
+        <button class="panel-close" id="next" title="Next month">
+          <i class="nf nf-md-chevron_right"></i>
+        </button>
+      </div>
+
+      <div class="cal-grid" id="weekdays"></div>
+      <div class="cal-grid" id="days"></div>
+
+      <div class="panel-separator"></div>
+
+      <div class="cal-agenda" id="agenda"></div>
+    </div>
+
+    <script type="module">
+      import * as zebar from './assets/vendor/zebar.js';
+      import { fitWindowToCard } from './assets/panel.js';
+      import { parseIcs } from './assets/ics.js';
+
+      const widget = zebar.currentWidget();
+
+      fitWindowToCard(widget);
+
+      const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
+      const calendarScript = `${packDir}\\scripts\\calendar.ps1`;
+
+      const el = {
+        title: document.getElementById('month-title'),
+        weekdays: document.getElementById('weekdays'),
+        days: document.getElementById('days'),
+        agenda: document.getElementById('agenda'),
+      };
+
+      const today = startOfDay(new Date());
+      let shownMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      let selected = new Date(today);
+      let events = [];
+
+      function startOfDay(date) {
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      }
+
+      function sameDay(a, b) {
+        return (
+          a.getFullYear() === b.getFullYear() &&
+          a.getMonth() === b.getMonth() &&
+          a.getDate() === b.getDate()
+        );
+      }
+
+      function dayKey(date) {
+        return (
+          date.getFullYear() +
+          '-' +
+          String(date.getMonth() + 1).padStart(2, '0') +
+          '-' +
+          String(date.getDate()).padStart(2, '0')
+        );
+      }
+
+      function timeText(date) {
+        return date.toLocaleTimeString(undefined, {
+          hour: 'numeric',
+          minute: '2-digit',
+        });
+      }
+
+      /*
+       * Weekday initials in the reader's own locale, and starting on whichever day
+       * their locale starts on rather than assuming Monday.
+       */
+      const firstDayOfWeek = (() => {
+        try {
+          const locale = new Intl.Locale(navigator.language);
+          const week = locale.getWeekInfo?.() || locale.weekInfo;
+
+          // getWeekInfo counts Monday as 1 and Sunday as 7; JS counts Sunday as 0.
+          if (week && week.firstDay) return week.firstDay % 7;
+        } catch {
+          // Not supported here.
+        }
+
+        return 1;
+      })();
+
+      function renderWeekdays() {
+        const names = [];
+
+        for (let i = 0; i < 7; i++) {
+          // Any known Sunday works as a starting point for the names.
+          const sample = new Date(2024, 8, 1 + ((firstDayOfWeek + i) % 7));
+
+          names.push(
+            '<div class="cal-weekday">' +
+              sample.toLocaleDateString(undefined, { weekday: 'narrow' }) +
+              '</div>',
+          );
+        }
+
+        el.weekdays.innerHTML = names.join('');
+      }
+
+      function eventsByDay() {
+        const map = new Map();
+
+        for (const event of events) {
+          const key = dayKey(event.start);
+
+          if (!map.has(key)) map.set(key, []);
+          map.get(key).push(event);
+        }
+
+        return map;
+      }
+
+      function render() {
+        el.title.textContent = shownMonth.toLocaleDateString(undefined, {
+          month: 'long',
+          year: 'numeric',
+        });
+
+        const byDay = eventsByDay();
+        const firstOfMonth = new Date(shownMonth);
+        // How far back to reach so the grid starts on the right weekday.
+        const lead = (firstOfMonth.getDay() - firstDayOfWeek + 7) % 7;
+        const start = new Date(firstOfMonth);
+        start.setDate(start.getDate() - lead);
+
+        const cells = [];
+
+        // Six weeks always, so the panel does not change height as months change.
+        for (let i = 0; i < 42; i++) {
+          const date = new Date(start);
+          date.setDate(date.getDate() + i);
+
+          const classes = ['cal-day'];
+
+          if (date.getMonth() !== shownMonth.getMonth()) classes.push('other-month');
+          if (sameDay(date, today)) classes.push('today');
+          if (sameDay(date, selected)) classes.push('selected');
+          if (byDay.has(dayKey(date))) classes.push('has-events');
+
+          cells.push(
+            '<button class="' +
+              classes.join(' ') +
+              '" data-date="' +
+              dayKey(date) +
+              '">' +
+              date.getDate() +
+              '</button>',
+          );
+        }
+
+        el.days.innerHTML = cells.join('');
+        renderAgenda(byDay);
+      }
+
+      function renderAgenda(byDay) {
+        const forDay = byDay.get(dayKey(selected)) || [];
+        const heading = sameDay(selected, today)
+          ? 'Today'
+          : selected.toLocaleDateString(undefined, {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+            });
+
+        if (forDay.length === 0) {
+          el.agenda.innerHTML =
+            '<div class="cal-agenda-day">' + heading + '</div>' +
+            '<div class="cal-agenda-empty">Nothing scheduled</div>';
+          return;
+        }
+
+        el.agenda.innerHTML =
+          '<div class="cal-agenda-day">' + heading + '</div>' +
+          forDay
+            .map(
+              event =>
+                '<div class="cal-event">' +
+                '<span class="cal-event-time">' +
+                (event.allDay ? 'all day' : timeText(event.start)) +
+                '</span>' +
+                '<span class="cal-event-title">' +
+                escapeHtml(event.summary) +
+                '</span>' +
+                '</div>',
+            )
+            .join('');
+      }
+
+      function escapeHtml(text) {
+        return String(text)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+      }
+
+      el.days.addEventListener('click', event => {
+        const button = event.target.closest('.cal-day');
+
+        if (!button) return;
+
+        const [year, month, day] = button.dataset.date.split('-').map(Number);
+        selected = new Date(year, month - 1, day);
+
+        // Clicking a day in the greyed edge of the grid moves the month with it.
+        if (selected.getMonth() !== shownMonth.getMonth()) {
+          shownMonth = new Date(selected.getFullYear(), selected.getMonth(), 1);
+          loadEvents();
+        }
+
+        render();
+      });
+
+      document.getElementById('previous').addEventListener('click', () => {
+        shownMonth = new Date(shownMonth.getFullYear(), shownMonth.getMonth() - 1, 1);
+        render();
+        loadEvents();
+      });
+
+      document.getElementById('next').addEventListener('click', () => {
+        shownMonth = new Date(shownMonth.getFullYear(), shownMonth.getMonth() + 1, 1);
+        render();
+        loadEvents();
+      });
+
+      document.getElementById('today').addEventListener('click', () => {
+        shownMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        selected = new Date(today);
+        render();
+        loadEvents();
+      });
+
+      /*
+       * Events come from scripts/calendar.ps1, which fetches the iCal feeds listed
+       * in ~/.glzr/calendar-feeds.txt. With no feeds configured the script prints
+       * nothing and this is a plain month view — which is the whole panel for anyone
+       * who does not want to hand it a calendar.
+       */
+      let icsText = null;
+
+      async function loadEvents() {
+        if (icsText === null) {
+          try {
+            const result = await zebar.shellExec('powershell.exe', [
+              '-NoProfile',
+              '-ExecutionPolicy',
+              'Bypass',
+              '-File',
+              calendarScript,
+            ]);
+
+            icsText = result.stdout || '';
+          } catch (error) {
+            console.warn('calendar feed unavailable:', error);
+            icsText = '';
+          }
+        }
+
+        if (!icsText) return;
+
+        // A month either side of the one on screen, so an event that starts in the
+        // previous month and runs into this one still shows.
+        const from = new Date(shownMonth.getFullYear(), shownMonth.getMonth() - 1, 1);
+        const to = new Date(shownMonth.getFullYear(), shownMonth.getMonth() + 2, 0);
+
+        try {
+          events = parseIcs(icsText, from, to);
+        } catch (error) {
+          console.warn('calendar could not be read:', error);
+          events = [];
+        }
+
+        render();
+      }
+
+      renderWeekdays();
+      render();
+      loadEvents();
+
+      /* Closing is done from outside, by the helper the bar starts when it opens
+         this panel (see window-ctl.ps1). Escape here is a bonus. */
+      function close() {
+        const panel = document.querySelector('.panel');
+
+        if (!panel || panel.classList.contains('closing')) {
+          widget.close();
+          return;
+        }
+
+        panel.classList.add('closing');
+        setTimeout(() => widget.close(), 130);
+      }
+
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+      });
+    </script>
+  </body>
+</html>

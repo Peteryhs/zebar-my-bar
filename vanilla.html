@@ -46,13 +46,18 @@
             title="Menu"
           ></i>
 
+          <!-- Whatever application has the foreground, named the way a menu bar
+               names it. Reported by the guard, which is watching the foreground
+               window anyway. -->
+          <span class="app-name" data-el="app-name" hidden></span>
+
           <div class="media clickable" data-panel="media-panel" hidden>
             <i class="nf" data-el="media-icon"></i>
             <span class="media-text" data-el="media-text"></span>
           </div>
         </div>
 
-        <div class="center" data-el="clock"></div>
+        <div class="center clickable" data-panel="calendar-panel" data-el="clock" title="Calendar"></div>
 
         <div class="right">
           <div class="system clickable" data-panel="system-panel" title="System panel" hidden>
@@ -279,38 +284,24 @@
        * ------------------------------------------------------------------ */
 
       /*
-       * scripts/fg-state.ps1 prints "max" while the foreground window is
-       * maximized and "float" otherwise. While a window is maximized the bar
-       * fills the whole strip it is given; the rest of the time `is-floating`
-       * lifts it off the screen edge (see styles.css).
+       * The guard reports `fg max` while the foreground window is maximized and
+       * `fg float` otherwise. While a window is maximized the bar fills the whole
+       * strip it is given; the rest of the time `is-floating` lifts it off the
+       * screen edge (see styles.css).
+       *
+       * This was a second PowerShell of its own (fg-state.ps1). The guard was
+       * already watching the foreground window to know whether a click belonged to
+       * one of our own windows, so it reports the answer instead of a second
+       * process polling for the same thing.
        */
-      async function watchForegroundState() {
-        const watcher = await zebar.shellSpawn('powershell.exe', [
-          '-NoProfile',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          `${packDir}\\scripts\\fg-state.ps1`,
-        ]);
-
-        watcher.onStdout(line => {
-          const state = line.trim();
-
-          if (state === 'max' || state === 'float') {
-            document.body.classList.toggle('is-floating', state === 'float');
-          }
-        });
-
-        watcher.onStderr(line => console.warn('fg-state:', line));
-
-        watcher.onExit(() => document.body.classList.remove('is-floating'));
-
-        window.addEventListener('beforeunload', () => watcher.kill());
+      function setForegroundState(state) {
+        document.body.classList.toggle('is-floating', state === 'float');
       }
 
-      watchForegroundState().catch(err =>
-        console.warn('fg-state watcher failed:', err),
-      );
+      function setAppName(name) {
+        el['app-name'].textContent = name;
+        show(el['app-name'], Boolean(name));
+      }
 
       /* ------------------------------------------------------------------ *
        * Panels
@@ -319,6 +310,7 @@
       const PANEL_NAMES = [
         'battery-panel',
         'about-panel',
+        'calendar-panel',
         'system-panel',
         'media-panel',
         'controls-panel',
@@ -422,8 +414,24 @@
           ]);
 
           guard.onStdout(line => {
-            const [event, name] = line.trim().split(/\s+/);
-            const state = panels.get(name);
+            const text = line.trim();
+            const space = text.indexOf(' ');
+            const event = space < 0 ? text : text.slice(0, space);
+            // An application's name can contain spaces, so only the first is a
+            // separator.
+            const rest = space < 0 ? '' : text.slice(space + 1);
+
+            if (event === 'fg') {
+              setForegroundState(rest);
+              return;
+            }
+
+            if (event === 'app') {
+              setAppName(rest);
+              return;
+            }
+
+            const state = panels.get(rest);
 
             if (!state) return;
 
@@ -443,6 +451,10 @@
             panels.forEach(state => {
               state.open = false;
             });
+
+            // The bar's own state came from the guard, so it is no longer known.
+            document.body.classList.remove('is-floating');
+            setAppName('');
 
             // The guard is the only thing that dismisses a panel, so it does not
             // get to stay dead. It also exits on a lifetime cap by design.

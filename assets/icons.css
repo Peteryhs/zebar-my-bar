@@ -19,8 +19,12 @@
 .nf-md-brightness_5:before{content:"\f00de"}
 .nf-md-brightness_6:before{content:"\f00df"}
 .nf-md-brightness_7:before{content:"\f00e0"}
+.nf-md-calendar_month:before{content:"\f0e17"}
 .nf-md-chart_line:before{content:"\f012a"}
+.nf-md-chevron_left:before{content:"\f0141"}
+.nf-md-chevron_right:before{content:"\f0142"}
 .nf-md-chip:before{content:"\f061a"}
+.nf-md-circle_small:before{content:"\f09df"}
 .nf-md-cog:before{content:"\f0493"}
 .nf-md-counter:before{content:"\f0199"}
 .nf-md-cpu_64_bit:before{content:"\f0ee0"}

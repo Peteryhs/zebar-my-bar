@@ -7,13 +7,14 @@
 # alone keeps working if that format ever changes.
 #
 #   close  Closes every match and prints how many it closed (0 if none).
-#   guard  Long lived. Watches every named panel in one process and closes one as
-#          soon as it is dismissed. Reports what it does on stdout, one event per
-#          line, which is how the bar knows whether a panel is up:
+#   guard  Long lived. One process per bar, doing everything the bar cannot do for
+#          itself. Reports on stdout, one event per line:
 #
 #            open <name>      a panel window appeared
 #            closed <name>    the guard closed it
 #            gone <name>      it disappeared on its own
+#            fg max|float     whether the foreground window is maximized
+#            app <name>       the foreground application, for the bar to show
 #
 # A panel is dismissed by a mouse click outside it, and by nothing else. Focus
 # changes and the pointer resting elsewhere both close popups the user never asked
@@ -21,12 +22,19 @@
 # reasons that are invisible from here, and a panel that vanishes a second after
 # opening is the result.
 #
-# Detecting the click here, from the mouse state, rather than in the panel's page
-# is deliberate. It does not depend on which window has the focus, or on a page
-# receiving an event, both of which turned out to be unreliable.
+# Clicks are detected here rather than in the panel's page. It does not depend on
+# which window has the focus, or on a page receiving an event, both of which turned
+# out to be unreliable. They arrive through a low level mouse hook, so the guard is
+# woken by a click rather than looking for one: polling the mouse state at 50Hz
+# worked, but a laptop should not be woken fifty times a second to be told nothing
+# happened.
 #
 # Closing happens here too, with WM_CLOSE after fading the window, so it never
 # depends on the page being able to close itself.
+#
+# The foreground state and application name used to be a second PowerShell
+# (fg-state.ps1). They are here now: it is the same polling loop, and one helper
+# process for a bar is enough.
 #
 # A trace file lives at %TEMP%\zebar-window-ctl.log.
 
@@ -34,30 +42,223 @@ param(
   [Parameter(Mandatory = $true)][ValidateSet('close', 'guard')][string]$Action,
   [Parameter(Mandatory = $true)][string]$Match,
   [string]$Owner = 'default',
-  [int]$TickMs = 20,
-  [int]$ScanMs = 300,
+  # How long a loop pass waits for a click before going round anyway. A click cuts
+  # the wait short, so this is the idle wake interval, not the click latency.
+  [int]$IdleWaitMs = 250,
+  # Fallback tick, used only if the mouse hook could not be installed.
+  [int]$PollMs = 20,
+  # Panels appear as a result of a click, so the window scan runs at this cadence
+  # for a moment after one and lazily the rest of the time.
+  [int]$ScanBusyMs = 300,
+  [int]$ScanIdleMs = 2000,
+  [int]$ScanBusyForMs = 2500,
   [int]$GraceMs = 250,
+  [int]$ForegroundMs = 250,
   [int]$HousekeepingMs = 5000,
   [int]$MaxLifetimeMinutes = 240
 )
 
-Add-Type -Namespace ZebarWin -Name Native -MemberDefinition @'
-public delegate bool EnumWindowsProc(System.IntPtr hWnd, System.IntPtr lParam);
-[DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, System.IntPtr lParam);
-[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(System.IntPtr hWnd, System.Text.StringBuilder text, int maxCount);
-[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint pid);
-[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr hWnd);
-[DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr hWnd);
-[DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
-[DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
-[DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr hWnd, out RECT rect);
-[DllImport("user32.dll")] public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint message, System.IntPtr wParam, System.IntPtr lParam, uint flags, uint timeout, out System.IntPtr result);
-[DllImport("user32.dll")] public static extern int GetWindowLong(System.IntPtr hWnd, int index);
-[DllImport("user32.dll")] public static extern int SetWindowLong(System.IntPtr hWnd, int index, int value);
-[DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(System.IntPtr hWnd, uint colorKey, byte alpha, uint flags);
-[DllImport("user32.dll")] public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr insertAfter, int x, int y, int width, int height, uint flags);
-public struct POINT { public int X; public int Y; }
-public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+
+namespace ZebarWin {
+  public static class Native {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    public delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder name, int maxCount);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int index, int value);
+    [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint colorKey, byte alpha, uint flags);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, HookProc callback, IntPtr module, uint threadId);
+    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern int GetMessage(out MSG message, IntPtr hWnd, uint filterMin, uint filterMax);
+
+    public struct POINT { public int X; public int Y; }
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG {
+      public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam;
+      public uint time; public POINT pt;
+    }
+
+    /*
+     * Mouse presses, counted as they happen.
+     *
+     * A low level mouse hook needs a message loop on the thread that installed it,
+     * so one runs on a background thread here. The callback does nothing but count,
+     * which matters: Windows quietly drops a hook whose callback is slow.
+     *
+     * The alternative was polling GetAsyncKeyState, which is what this replaces. It
+     * cost a wake every 20ms for the life of the bar, and reading its "pressed
+     * since last call" bit was worse than useless because any other process
+     * polling input consumed the press first.
+     */
+    private const int WH_MOUSE_LL = 14;
+    private static int pressCount = 0;
+    private static IntPtr hookHandle = IntPtr.Zero;
+    private static HookProc hookCallback;   // held so it is not collected
+    private static Thread hookThread;
+    private static ManualResetEventSlim pressSignal = new ManualResetEventSlim(false);
+
+    public static bool StartClickHook() {
+      hookThread = new Thread(new ThreadStart(HookLoop));
+      hookThread.IsBackground = true;
+      hookThread.Start();
+
+      // The hook is installed on that thread; give it a moment to report back.
+      for (int i = 0; i < 40 && hookHandle == IntPtr.Zero; i++) Thread.Sleep(25);
+
+      return hookHandle != IntPtr.Zero;
+    }
+
+    private static void HookLoop() {
+      hookCallback = new HookProc(OnMouseEvent);
+      hookHandle = SetWindowsHookEx(WH_MOUSE_LL, hookCallback, IntPtr.Zero, 0);
+
+      if (hookHandle == IntPtr.Zero) return;
+
+      MSG message;
+      while (GetMessage(out message, IntPtr.Zero, 0, 0) > 0) { }
+    }
+
+    private static IntPtr OnMouseEvent(int code, IntPtr wParam, IntPtr lParam) {
+      if (code >= 0) {
+        int what = wParam.ToInt32();
+
+        // Left, right and middle button down. Not up, and not movement.
+        if (what == 0x0201 || what == 0x0204 || what == 0x0207) {
+          Interlocked.Increment(ref pressCount);
+          pressSignal.Set();
+        }
+      }
+
+      return CallNextHookEx(hookHandle, code, wParam, lParam);
+    }
+
+    // How many presses since this was last asked, and resets the count.
+    public static int TakePresses() {
+      pressSignal.Reset();
+
+      return Interlocked.Exchange(ref pressCount, 0);
+    }
+
+    /*
+     * Waits for a press, up to a limit, blocking on an event the hook sets rather
+     * than looking repeatedly. A click wakes this immediately and idling costs one
+     * wake per timeout, which is the point: the first version of this slept in a
+     * loop and was no better than the polling it replaced.
+     */
+    public static int WaitForPress(int timeoutMs) {
+      if (pressSignal.Wait(timeoutMs)) pressSignal.Reset();
+
+      return Interlocked.Exchange(ref pressCount, 0);
+    }
+
+    // Fallback for when the hook could not be installed: the button's own state,
+    // which nothing else can clear, with the press edge worked out here.
+    private static bool wasDown = false;
+
+    public static bool AnyButtonDown() {
+      return (GetAsyncKeyState(0x01) & 0x8000) != 0
+          || (GetAsyncKeyState(0x02) & 0x8000) != 0
+          || (GetAsyncKeyState(0x04) & 0x8000) != 0;
+    }
+
+    public static void ResyncButtons() { wasDown = AnyButtonDown(); }
+
+    public static bool PolledPress() {
+      bool down = AnyButtonDown();
+      bool pressed = down && !wasDown;
+      wasDown = down;
+      return pressed;
+    }
+
+    /*
+     * Finding the panel windows.
+     *
+     * Enumerating top level windows means a callback per window, and there are a
+     * couple of hundred of them. Done from PowerShell that was a couple of hundred
+     * transitions out of native code and into the interpreter, several times a
+     * second, and it was the single most expensive thing the guard did. Here it is
+     * one call in, one array out.
+     */
+    private static List<long> matchedWindows;
+    private static string[] wantedNames;
+    private static string wantedProcess;
+
+    public static long[] FindWindows(string[] names, string processName) {
+      matchedWindows = new List<long>();
+      wantedNames = names;
+      wantedProcess = processName;
+
+      EnumWindows(new EnumWindowsProc(OnWindow), IntPtr.Zero);
+
+      return matchedWindows.ToArray();
+    }
+
+    private static bool OnWindow(IntPtr hWnd, IntPtr lParam) {
+      if (!IsWindowVisible(hWnd)) return true;
+
+      StringBuilder title = new StringBuilder(512);
+      GetWindowTextW(hWnd, title, 512);
+      string text = title.ToString();
+
+      if (text.Length == 0) return true;
+      if (IndexOfName(text, wantedNames) < 0) return true;
+
+      // Only titles that already match are checked against the process, so this
+      // does not need to look up every process on the machine.
+      uint owner;
+      GetWindowThreadProcessId(hWnd, out owner);
+
+      try {
+        System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById((int)owner);
+
+        if (string.Equals(process.ProcessName, wantedProcess, StringComparison.OrdinalIgnoreCase)) {
+          matchedWindows.Add(hWnd.ToInt64());
+        }
+      } catch {
+        // Gone between the enumeration and the lookup.
+      }
+
+      return true;
+    }
+
+    private static int IndexOfName(string title, string[] names) {
+      for (int i = 0; i < names.Length; i++) {
+        if (title.IndexOf(names[i], StringComparison.OrdinalIgnoreCase) >= 0) return i;
+      }
+
+      return -1;
+    }
+
+    public static string NameForWindow(long handle, string[] names) {
+      StringBuilder title = new StringBuilder(512);
+      GetWindowTextW(new IntPtr(handle), title, 512);
+
+      int index = IndexOfName(title.ToString(), names);
+
+      return index < 0 ? "unknown" : names[index];
+    }
+  }
+}
 '@
 
 $WM_CLOSE = 0x0010
@@ -95,61 +296,34 @@ function Write-Event([string]$message) {
 }
 
 function Get-TargetWindows {
-  $found = New-Object System.Collections.ArrayList
-
-  $callback = [ZebarWin.Native+EnumWindowsProc]{
-    param($hWnd, $lParam)
-
-    if (-not [ZebarWin.Native]::IsWindowVisible($hWnd)) {
-      return $true
-    }
-
-    $title = New-Object System.Text.StringBuilder 512
-    [void][ZebarWin.Native]::GetWindowTextW($hWnd, $title, 512)
-    $titleText = $title.ToString()
-
-    $matched = $false
-
-    foreach ($name in $matchNames) {
-      if ($titleText -like "*$name*") {
-        $matched = $true
-        break
-      }
-    }
-
-    if (-not $matched) {
-      return $true
-    }
-
-    # Only titles that already match are checked against the process, so the scan
-    # does not need to enumerate every process on the machine.
-    $ownerPid = 0
-    [void][ZebarWin.Native]::GetWindowThreadProcessId($hWnd, [ref]$ownerPid)
-    $owner = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
-
-    if ($owner -and $owner.ProcessName -eq 'zebar') {
-      [void]$found.Add($hWnd)
-    }
-
-    return $true
-  }
-
-  [void][ZebarWin.Native]::EnumWindows($callback, [System.IntPtr]::Zero)
-  return $found
+  return [ZebarWin.Native]::FindWindows($matchNames, 'zebar')
 }
 
-function Get-WindowName($handle) {
-  $title = New-Object System.Text.StringBuilder 512
-  [void][ZebarWin.Native]::GetWindowTextW([System.IntPtr]$handle, $title, 512)
-  $titleText = $title.ToString()
+function Get-WindowName([int64]$handle) {
+  return [ZebarWin.Native]::NameForWindow($handle, $matchNames)
+}
 
-  foreach ($name in $matchNames) {
-    if ($titleText -like "*$name*") {
-      return $name
-    }
-  }
+function Get-CursorPoint {
+  $point = New-Object ZebarWin.Native+POINT
+  [void][ZebarWin.Native]::GetCursorPos([ref]$point)
 
-  return 'unknown'
+  return $point
+}
+
+function Get-WindowRect([int64]$handle) {
+  $rect = New-Object ZebarWin.Native+RECT
+  [void][ZebarWin.Native]::GetWindowRect([System.IntPtr]$handle, [ref]$rect)
+
+  return $rect
+}
+
+function Test-PointInsideRect($point, $rect) {
+  return ($point.X -ge $rect.Left -and $point.X -lt $rect.Right -and
+          $point.Y -ge $rect.Top -and $point.Y -lt $rect.Bottom)
+}
+
+function Test-PointerInsideWindow([int64]$handle) {
+  return Test-PointInsideRect (Get-CursorPoint) (Get-WindowRect $handle)
 }
 
 # Fade the window out, then close it. The fade is done here, on the window, rather
@@ -159,9 +333,7 @@ function Close-Window([int64]$handle) {
   $hwnd = [System.IntPtr]$handle
 
   try {
-    $rect = New-Object ZebarWin.Native+RECT
-    [void][ZebarWin.Native]::GetWindowRect($hwnd, [ref]$rect)
-
+    $rect = Get-WindowRect $handle
     $style = [ZebarWin.Native]::GetWindowLong($hwnd, $GWL_EXSTYLE)
 
     if (($style -band $WS_EX_LAYERED) -eq 0) {
@@ -188,7 +360,7 @@ function Close-Window([int64]$handle) {
   # Whether WM_CLOSE was actually honoured. A window that survives it but has
   # already been reported closed is invisible to everything upstream: the panel
   # stays on screen, the bar believes it is gone, and the next click is spent
-  # discovering that. Traced so it can never be a silent assumption again.
+  # discovering that.
   Start-Sleep -Milliseconds 120
   $survived = [ZebarWin.Native]::IsWindow($hwnd)
 
@@ -199,57 +371,11 @@ function Close-Window([int64]$handle) {
   return (-not $survived)
 }
 
-# Is any mouse button down right now.
-#
-# The high bit is the button's actual state and is true for as long as the button
-# is held. The low bit of the same call means "pressed since the previous call",
-# which is the obvious thing to use here and is why clicks went missing: Windows
-# documents it as unreliable, and the reason is that it is cleared by whichever
-# caller reads it next. Any other process on the machine polling input consumes the
-# press before this one gets its turn, so a click would be silently lost, at random,
-# and the panel needed clicking again.
-#
-# The press edge is worked out below instead, from this state, which nothing else
-# can take away.
-function Test-ButtonDown {
-  foreach ($virtualKey in 0x01, 0x02, 0x04) {
-    if (([ZebarWin.Native]::GetAsyncKeyState($virtualKey) -band 0x8000) -ne 0) {
-      return $true
-    }
-  }
-
-  return $false
-}
-
-function Get-CursorPoint {
-  $point = New-Object ZebarWin.Native+POINT
-  [void][ZebarWin.Native]::GetCursorPos([ref]$point)
-
-  return $point
-}
-
-function Get-WindowRect([int64]$handle) {
-  $rect = New-Object ZebarWin.Native+RECT
-  [void][ZebarWin.Native]::GetWindowRect([System.IntPtr]$handle, [ref]$rect)
-
-  return $rect
-}
-
-function Test-PointInsideRect($point, $rect) {
-  return ($point.X -ge $rect.Left -and $point.X -lt $rect.Right -and
-          $point.Y -ge $rect.Top -and $point.Y -lt $rect.Bottom)
-}
-
-function Test-PointerInsideWindow([int64]$handle) {
-  return Test-PointInsideRect (Get-CursorPoint) (Get-WindowRect $handle)
-}
-
 if ($Action -eq 'close') {
   $closed = 0
-  $targets = Get-TargetWindows
 
-  foreach ($handle in $targets) {
-    Close-Window ([int64]$handle)
+  foreach ($handle in (Get-TargetWindows)) {
+    [void](Close-Window ([int64]$handle))
     $closed++
   }
 
@@ -258,8 +384,10 @@ if ($Action -eq 'close') {
   exit 0
 }
 
+# ---------------------------------------------------------------------------
 # -Action guard
-#
+# ---------------------------------------------------------------------------
+
 # One guard per bar. The bar passes an -Owner identifying the display it sits on,
 # so two bars (one per monitor) do not retire each other, while a reloaded bar
 # takes over its own display's guard. A pid file beats asking WMI for process
@@ -273,30 +401,145 @@ try {
   # Without the file the guard still works, it just cannot retire itself.
 }
 
+$hooked = [ZebarWin.Native]::StartClickHook()
+
+if (-not $hooked) {
+  [ZebarWin.Native]::ResyncButtons()
+}
+
+Write-Trace (
+  'guard start names={0} pid={1} owner={2} clicks={3}' -f
+    ($matchNames -join '|'), $PID, $ownerKey,
+    $(if ($hooked) { 'hook' } else { 'polled' }))
+
 # stdin is read only to notice the bar going away: when the bar's page is gone the
 # pipe closes and the read returns null.
 #
 # The bar does not send commands here. It used to, and they never arrived: zebar's
 # shellWrite resolves without delivering anything, so the write looked fine from
-# the page while this process saw nothing. Everything the bar needs is either a
-# one-shot `-Action close` or something this guard works out for itself.
+# the page while this process saw nothing.
 $stdin = New-Object System.IO.StreamReader ([Console]::OpenStandardInput())
 $pendingRead = $stdin.ReadLineAsync()
 
-$lastScan = (Get-Date).AddYears(-1)
-$lastHousekeeping = Get-Date
-# Whether a mouse button was down on the previous poll, which is how a press is
-# told from a hold.
-$wasButtonDown = Test-ButtonDown
 $active = @()
 # A closed window can linger for a moment, so remember what we just closed to
 # avoid attaching to it again on the next scan.
 $recentlyClosed = @{}
+$lastScan = (Get-Date).AddYears(-1)
+$lastClickAt = (Get-Date).AddYears(-1)
+$lastForeground = (Get-Date).AddYears(-1)
+$lastHousekeeping = Get-Date
+$lastCacheClear = Get-Date
 $lifeDeadline = (Get-Date).AddMinutes($MaxLifetimeMinutes)
 
-Write-Trace ('guard start names={0} pid={1} owner={2}' -f ($matchNames -join '|'), $PID, $ownerKey)
+# --- foreground window reporting (was fg-state.ps1) ------------------------
+
+# Shell surfaces are not "windows" for our purpose: if one of these has focus, the
+# bar floats like it does on the bare desktop.
+$shellClasses = @(
+  'Progman', 'WorkerW', 'SysListView32', 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd',
+  'Windows.UI.Core.CoreWindow', 'XamlExplorerHostIslandWindow'
+)
+
+# Zebar's own windows are not an answer to "what is the user working in". The bar
+# and every panel take the foreground when clicked, and since neither is maximized
+# the state would flip to "float" the moment the bar was touched.
+#
+# A widget's top level window belongs to zebar.exe, which the panel scan above
+# relies on to find panels at all, so the process name is enough. This used to walk
+# the parent chain with a WMI query per hop, on the belief that the window belonged
+# to a WebView2 child; that cost most of the guard's idle CPU, for an answer it
+# could read directly.
+$appNameCache = @{}
+
+function Test-OwnProcess([uint32]$processId) {
+  if ($processId -eq 0) { return $false }
+
+  $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+
+  return ($process -and $process.ProcessName -eq 'zebar')
+}
+
+# The application's name as a person would say it: "Visual Studio Code", not
+# "Code.exe", and not the window title, which is usually the document and changes
+# on every keystroke.
+function Get-AppName([uint32]$processId) {
+  if ($processId -eq 0) { return '' }
+  if ($appNameCache.ContainsKey($processId)) { return $appNameCache[$processId] }
+
+  $name = ''
+
+  try {
+    $process = Get-Process -Id $processId -ErrorAction Stop
+    $name = $process.ProcessName
+
+    try {
+      $described = $process.MainModule.FileVersionInfo.FileDescription
+
+      if ($described -and $described.Trim() -ne '') { $name = $described.Trim() }
+    } catch {
+      # Protected process: the process name will do.
+    }
+  } catch {
+    $name = ''
+  }
+
+  $appNameCache[$processId] = $name
+
+  return $name
+}
+
+$lastFgState = ''
+$lastAppName = ''
+
+function Update-Foreground {
+  $handle = [ZebarWin.Native]::GetForegroundWindow()
+
+  if ($handle -eq [System.IntPtr]::Zero) {
+    return @{ State = 'float'; App = '' }
+  }
+
+  $ownerPid = [uint32]0
+  [void][ZebarWin.Native]::GetWindowThreadProcessId($handle, [ref]$ownerPid)
+
+  # One of ours: report nothing and leave the bar as it is.
+  if (Test-OwnProcess $ownerPid) {
+    return $null
+  }
+
+  $classBuffer = New-Object System.Text.StringBuilder 256
+  [void][ZebarWin.Native]::GetClassName($handle, $classBuffer, 256)
+  $className = $classBuffer.ToString()
+
+  if (($shellClasses -contains $className) -or
+      -not [ZebarWin.Native]::IsWindowVisible($handle)) {
+    return @{ State = 'float'; App = '' }
+  }
+
+  $state = 'float'
+  if ([ZebarWin.Native]::IsZoomed($handle)) { $state = 'max' }
+
+  return @{ State = $state; App = (Get-AppName $ownerPid) }
+}
+
+# ---------------------------------------------------------------------------
 
 while ($true) {
+  # Wait for a click. The wait is cut short the moment one arrives, so this is the
+  # idle wake interval rather than the click latency.
+  $clicked = $false
+
+  if ($hooked) {
+    $clicked = ([ZebarWin.Native]::WaitForPress($IdleWaitMs) -gt 0)
+  } else {
+    $clicked = [ZebarWin.Native]::PolledPress()
+    if (-not $clicked) { Start-Sleep -Milliseconds $PollMs }
+  }
+
+  $now = Get-Date
+
+  if ($clicked) { $lastClickAt = $now }
+
   if ($pendingRead.IsCompleted) {
     $line = ''
 
@@ -314,20 +557,10 @@ while ($true) {
     $pendingRead = $stdin.ReadLineAsync()
   }
 
-  # A click is the moment a button goes from up to down. Watching the state means
-  # the poll has to be quick enough to land inside the press: a click is held for
-  # something like 50 to 150ms, so $TickMs is 20 rather than 100.
-  $buttonDown = Test-ButtonDown
-  $clicked = $buttonDown -and -not $wasButtonDown
-  $wasButtonDown = $buttonDown
-
-  $now = Get-Date
-
-  # Every click this process sees is written down, whatever it decides to do
-  # about it, along with everything the decision was made from. A click that is
-  # detected and deliberately dropped and a click that is never detected at all
-  # look identical from the far side of the screen, and telling those two apart
-  # is the whole difficulty.
+  # Every click is written down, whatever is decided about it, along with what the
+  # decision was made from. A click that is detected and deliberately dropped and a
+  # click that was never detected at all look identical from the far side of the
+  # screen, and telling those apart is the whole difficulty.
   if ($clicked) {
     $point = Get-CursorPoint
 
@@ -379,9 +612,17 @@ while ($true) {
     }
   }
 
-  # Attach to new panels at a slower cadence: enumerating windows is the
-  # expensive part.
-  if (($now - $lastScan).TotalMilliseconds -ge $ScanMs) {
+  # Look for new panels. A panel can only appear because something was clicked, so
+  # this runs briskly for a moment after a click and lazily the rest of the time. A
+  # panel opened from a command line is picked up on the slow cadence instead, which
+  # is the only thing the laziness costs.
+  $scanEvery = if (($now - $lastClickAt).TotalMilliseconds -lt $ScanBusyForMs) {
+    $ScanBusyMs
+  } else {
+    $ScanIdleMs
+  }
+
+  if (($now - $lastScan).TotalMilliseconds -ge $scanEvery) {
     $lastScan = $now
 
     foreach ($key in @($recentlyClosed.Keys)) {
@@ -423,10 +664,10 @@ while ($true) {
         }
       )
 
-      # Swallow the click that opened the panel: if the button is still held, take
-      # the current state as the baseline so releasing it cannot read as a new
-      # press. The grace period below covers the rest.
-      $wasButtonDown = Test-ButtonDown
+      # Discard the click that opened the panel: with the hook it is already
+      # counted, and the grace period covers the rest.
+      [void][ZebarWin.Native]::TakePresses()
+      if (-not $hooked) { [ZebarWin.Native]::ResyncButtons() }
 
       $rect = Get-WindowRect ([int64]$handle)
       Write-Event ('open {0}' -f $name)
@@ -436,14 +677,38 @@ while ($true) {
     }
   }
 
+  # Foreground window: whether it is maximized, and which application it is.
+  if (($now - $lastForeground).TotalMilliseconds -ge $ForegroundMs) {
+    $lastForeground = $now
+    $foreground = Update-Foreground
+
+    if ($null -ne $foreground) {
+      if ($foreground.State -ne $lastFgState) {
+        $lastFgState = $foreground.State
+        Write-Event ('fg {0}' -f $foreground.State)
+      }
+
+      if ($foreground.App -ne $lastAppName) {
+        $lastAppName = $foreground.App
+        Write-Event ('app {0}' -f $foreground.App)
+      }
+    }
+  }
+
   # Every few seconds: step aside if a newer guard for this display claimed the pid
   # file, exit if Zebar is gone, and give up after the lifetime cap so a stray
   # guard cannot linger forever (the bar starts a fresh one).
-  #
-  # Timed rather than counted in ticks, so the tick rate can change without
-  # quietly turning this into a busy loop.
   if (($now - $lastHousekeeping).TotalMilliseconds -ge $HousekeepingMs) {
     $lastHousekeeping = $now
+
+    # Process ids are reused, so remembered application names eventually describe
+    # the wrong process. Cleared rarely rather than every few seconds: resolving a
+    # name reads the executable's version info, and the cost of being briefly wrong
+    # about a label is small.
+    if ($appNameCache.Count -gt 0 -and ($now - $lastCacheClear).TotalMinutes -ge 5) {
+      $lastCacheClear = $now
+      $appNameCache.Clear()
+    }
 
     $claimedOwner = ''
 
@@ -468,8 +733,6 @@ while ($true) {
       break
     }
   }
-
-  Start-Sleep -Milliseconds $TickMs
 }
 
 exit 0

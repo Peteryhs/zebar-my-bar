@@ -44,7 +44,7 @@
         "shellCommands": [
           {
             "program": "powershell.exe",
-            "argsRegex": "-NoProfile( -ExecutionPolicy Bypass)? -File .*\\\\(fg-state|window-ctl|power|brightness)\\.ps1"
+            "argsRegex": "-NoProfile( -ExecutionPolicy Bypass)? -File .*\\\\(window-ctl|brightness)\\.ps1"
           }
         ]
       },
@@ -399,7 +399,7 @@
         "shellCommands": [
           {
             "program": "powershell.exe",
-            "argsRegex": "-NoProfile( -ExecutionPolicy Bypass)? -File .*\\\\(fg-state|window-ctl|power|brightness)\\.ps1"
+            "argsRegex": "-NoProfile -ExecutionPolicy Bypass -File .*\\\\brightness\\.ps1"
           }
         ]
       },
@@ -548,6 +548,69 @@
           "offsetY": "0px",
           "width": "460px",
           "height": "420px",
+          "monitorSelection": {
+            "type": "secondary"
+          },
+          "dockToEdge": {
+            "enabled": false,
+            "edge": null,
+            "windowMargin": "0px"
+          }
+        }
+      ]
+    },
+    {
+      "name": "calendar-panel",
+      "htmlPath": "./calendar-panel.html",
+      "zOrder": "top_most",
+      "shownInTaskbar": false,
+      "focused": true,
+      "resizable": false,
+      "transparent": true,
+      "includeFiles": [
+        "*.html",
+        "*.css",
+        "assets/*",
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
+      ],
+      "caching": {
+        "defaultDuration": 604800,
+        "rules": []
+      },
+      "privileges": {
+        "shellCommands": [
+          {
+            "program": "powershell.exe",
+            "argsRegex": "-NoProfile -ExecutionPolicy Bypass -File .*\\\\calendar\\.ps1$"
+          }
+        ]
+      },
+      "presets": [
+        {
+          "name": "primary",
+          "anchor": "top_center",
+          "offsetX": "0px",
+          "offsetY": "48px",
+          "width": "300px",
+          "height": "440px",
+          "monitorSelection": {
+            "type": "primary"
+          },
+          "dockToEdge": {
+            "enabled": false,
+            "edge": null,
+            "windowMargin": "0px"
+          }
+        },
+        {
+          "name": "secondary",
+          "anchor": "top_center",
+          "offsetX": "0px",
+          "offsetY": "48px",
+          "width": "300px",
+          "height": "440px",
           "monitorSelection": {
             "type": "secondary"
           },

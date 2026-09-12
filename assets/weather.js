@@ -23,12 +23,7 @@ const LOCATION = null;
 
 const COORDS_KEY = 'zebar-bar.coords';
 
-/*
- * How the coordinates were found, worst to best. A better source replaces a
- * cached worse one: an IP lookup can be a different city, and the temperature it
- * returns is then someone else's.
- */
-const SOURCE_RANK = { ip: 1, device: 2, manual: 3 };
+
 
 /*
  * Five attempts, with the gap growing between them. Roughly four minutes of
@@ -93,47 +88,15 @@ async function fetchJson(url) {
 }
 
 /*
- * The device's own position, through Windows location services. This is the
- * accurate one: an IP lookup returns wherever the address is registered, which
- * for a phone hotspot, a VPN or a corporate network can be a different city and
- * a materially different temperature.
+ * Windows location services are not asked.
  *
- * Resolves to null on anything at all: no permission, no location service, no
- * fix. It is an upgrade over the IP guess, never a requirement.
+ * navigator.geolocation would be the accurate source, and it was used here, but on
+ * a machine with location turned off it means a permission prompt every time a
+ * panel opens and nothing to show for it. An IP lookup is less precise — it
+ * returns wherever the address is registered, which on a hotspot or a VPN can be
+ * the wrong city — but it is silent, and LOCATION above overrides it for anyone who
+ * wants the exact answer.
  */
-function deviceCoords() {
-  if (!navigator.geolocation) return Promise.resolve(null);
-
-  return new Promise(resolve => {
-    let settled = false;
-
-    const finish = value => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-
-    navigator.geolocation.getCurrentPosition(
-      position =>
-        finish({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          place: '',
-          source: 'device',
-        }),
-      error => {
-        console.warn('device location unavailable:', error.message);
-        finish(null);
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 600000 },
-    );
-
-    // Some webview builds neither resolve nor reject when the permission has
-    // never been answered.
-    setTimeout(() => finish(null), 9000);
-  });
-}
-
 async function ipCoords() {
   return withRetry(async () => {
     const info = await fetchJson('https://ipinfo.io/json');
@@ -169,26 +132,10 @@ export function knownCoords() {
   return readCache();
 }
 
-// The device is asked once per session. A refused permission or a machine with
-// no location service would otherwise cost the timeout on every refresh.
-let devicePromise = null;
-
 export async function resolveCoords() {
   if (LOCATION) return { ...LOCATION, source: 'manual' };
 
   const cached = readCache();
-  const cachedRank = cached ? SOURCE_RANK[cached.source] || 0 : 0;
-
-  const device = await (devicePromise ??= deviceCoords());
-
-  if (device && SOURCE_RANK.device >= cachedRank) {
-    // Keep a place name we already know: the device gives coordinates only, and
-    // a blank label reads worse than the city we had.
-    if (!device.place && cached && cached.place) device.place = cached.place;
-
-    writeCache(device);
-    return device;
-  }
 
   if (cached) return cached;
 

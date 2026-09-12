@@ -588,6 +588,24 @@ body.is-floating #root {
   align-items: center;
 }
 
+/*
+ * The foreground application, next to the menu button, the way a menu bar names
+ * the app you are in. Bold because it is a label rather than a reading, and
+ * clamped because an application is free to call itself anything.
+ */
+.app-name {
+  font-weight: 600;
+  max-width: 200px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The clock opens the calendar, so it needs to look like it does something. */
+.center.clickable {
+  padding: 4px 10px;
+}
+
 /* Long track titles must not push the other tiles around. */
 .media-text {
   max-width: 210px;
@@ -766,6 +784,115 @@ body.is-floating #root {
 .control-slider:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/*
+ * Calendar panel (see calendar-panel.html). Six week rows always, so the panel
+ * does not change height as the months change.
+ */
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.cal-weekday {
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.45;
+  padding-bottom: 2px;
+}
+
+.cal-day {
+  position: relative;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.cal-day:hover {
+  background: rgb(255 255 255 / 10%);
+}
+
+.cal-day.other-month {
+  opacity: 0.3;
+}
+
+/* Today is marked by the number, the selection by the fill: both can be true at
+   once without one hiding the other. */
+.cal-day.today {
+  font-weight: 700;
+  color: #8fb4ff;
+}
+
+.cal-day.selected {
+  background: rgb(75 115 255 / 45%);
+}
+
+/* A dot under the number, for a day with something on it. */
+.cal-day.has-events::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+.cal-agenda {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cal-agenda-day {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.cal-agenda-empty {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.cal-event {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  align-items: baseline;
+}
+
+.cal-event-time {
+  flex: 0 0 62px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-event-title {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The month arrows reuse the panel close button's shape. */
+.calendar-panel .panel-header .panel-close {
+  opacity: 0.7;
 }
 
 /*
