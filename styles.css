@@ -791,8 +791,16 @@ body.is-floating #root {
  * the right. Six week rows always, so the panel does not change height as the
  * months change.
  */
+/*
+ * Wraps rather than squeezes. The card cannot be wider than its window, so if the
+ * window is narrower than the two columns need — a preset not yet reloaded, say —
+ * the day drops below the month and the card grows taller, which the window follows
+ * (assets/panel.js). Without the wrap the day column is crushed to a few pixels and
+ * its contents are simply cut off, with nothing to say why.
+ */
 .cal-body {
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   align-items: flex-start;
 }
@@ -807,14 +815,24 @@ body.is-floating #root {
 /* The day gets the rest, which is most of it: blocks along a line need width in a
    way a month grid does not. */
 .cal-day-view {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 300px;
+  min-width: 260px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   border-left: 1px solid rgb(255 255 255 / 8%);
   padding-left: 14px;
   align-self: stretch;
+}
+
+/* Stacked, the dividing rule belongs above it rather than beside it. */
+@media (max-width: 560px) {
+  .cal-day-view {
+    border-left: 0;
+    border-top: 1px solid rgb(255 255 255 / 8%);
+    padding-left: 0;
+    padding-top: 10px;
+  }
 }
 
 .cal-day-title {
