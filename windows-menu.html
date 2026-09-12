@@ -25,7 +25,8 @@
     <link rel="modulepreload" href="./assets/vendor/tauri-core.js" />
     <link rel="modulepreload" href="./assets/vendor/tauri-event.js" />
     <link rel="modulepreload" href="./assets/vendor/tauri-window.js" />
-    <link rel="modulepreload" href="./assets/vendor/glazewm.js" />  </head>
+    <link rel="modulepreload" href="./assets/vendor/glazewm.js" />
+  </head>
   <body class="panel-body">
     <div class="panel menu">
       <div class="menu-items" id="items"></div>
@@ -40,11 +41,42 @@
       const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
       const powerScript = packDir + '\\scripts\\power.ps1';
 
+      /*
+       * Which preset to open a panel with. Same reasoning as the bar: the panel
+       * belongs on the display the menu is on, and each preset is pinned to one
+       * monitor. Resolved once, at load, so a click never waits on it.
+       */
+      const panelPreset = (async () => {
+        try {
+          const { currentMonitor, primaryMonitor } = await import(
+            './assets/vendor/tauri-window.js'
+          );
+          const [current, primary] = await Promise.all([
+            currentMonitor(),
+            primaryMonitor(),
+          ]);
+
+          if (
+            current &&
+            primary &&
+            (current.position.x !== primary.position.x ||
+              current.position.y !== primary.position.y)
+          ) {
+            return 'secondary';
+          }
+        } catch (err) {
+          console.warn('Monitor lookup failed, using the primary preset.', err);
+        }
+
+        return 'primary';
+      })();
+
       /* Same shape as the Apple menu: a system group, quick settings, then
          session actions. `cmd` runs through cmd.exe, `power` through
-         scripts/power.ps1. Both are allowlisted in zpack.json. */
+         scripts/power.ps1, `widget` opens another panel of this pack. All are
+         allowlisted in zpack.json. */
       const items = [
-        { icon: 'nf-md-information_outline', label: 'About this computer', cmd: ['/c', 'start', 'ms-settings:about'] },
+        { icon: 'nf-md-information_outline', label: 'About this computer', widget: 'about-panel' },
         { icon: 'nf-md-cog', label: 'System settings', cmd: ['/c', 'start', 'ms-settings:'] },
         { separator: true },
         { icon: 'nf-md-monitor', label: 'Display', cmd: ['/c', 'start', 'ms-settings:display'] },
@@ -118,7 +150,17 @@
        */
       async function run(item) {
         try {
-          if (item.cmd) {
+          if (item.widget) {
+            /*
+             * Opening another panel of this pack. The guard closes this menu on
+             * its own as soon as the new panel appears, one panel at a time, but
+             * close() still runs below so the menu goes away immediately rather
+             * than on the guard's next scan.
+             */
+            await zebar.startWidgetPreset(item.widget, await panelPreset, {
+              packId: widget.packId,
+            });
+          } else if (item.cmd) {
             await zebar.shellExec('cmd.exe', item.cmd);
           } else if (item.power) {
             await zebar.shellExec('powershell.exe', [
@@ -150,6 +192,16 @@
          opens this menu (see window-ctl.ps1). Escape here is a bonus. */
       window.addEventListener('keydown', event => {
         if (event.key === 'Escape') close();
+      });
+
+      /*
+       * The card no longer fills its window, so there is a transparent strip
+       * below it that belongs to this panel. A click there used to dismiss,
+       * because it landed outside the window; now it lands inside one. Treat it
+       * as what it looks like: a click outside the card.
+       */
+      window.addEventListener('mousedown', event => {
+        if (!event.target.closest('.panel')) close();
       });
     </script>
   </body>

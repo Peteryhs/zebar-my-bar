@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!--
+      styles.css @imports the icon font stylesheet, which in turn asks for the
+      woff2: three requests discovered one after another, with the icon glyphs
+      not drawn until the last one lands. Preloading starts all three at once.
+    -->
+    <link rel="preload" href="./assets/icons.css" as="style" />
+    <link rel="preload" href="./assets/nerdfont.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+    <!--
+      The zebar client module and its dependencies are vendored (assets/vendor),
+      for the same reason the icon font is: a panel is a fresh webview every time
+      it opens, and importing the module graph from a CDN put three round trips
+      in front of the first paint. Preloading them here starts all seven files at
+      once instead of discovering each one after the previous has parsed.
+    -->
+    <link rel="modulepreload" href="./assets/vendor/zebar.js" />
+    <link rel="modulepreload" href="./assets/vendor/zod.js" />
+    <link rel="modulepreload" href="./assets/vendor/luxon.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-core.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-event.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-window.js" />
+    <link rel="modulepreload" href="./assets/vendor/glazewm.js" />
+  </head>
+  <body class="panel-body">
+    <div class="panel about-panel">
+      <div class="panel-header">
+        <i class="nf nf-dev-windows11"></i>
+        <span class="panel-title">About this computer</span>
+      </div>
+
+      <div class="about-identity">
+        <span class="about-name" id="device-name">--</span>
+        <span class="about-model" id="model"></span>
+      </div>
+
+      <div class="panel-separator"></div>
+
+      <div class="panel-rows" id="rows"></div>
+    </div>
+
+    <script type="module">
+      import * as zebar from './assets/vendor/zebar.js';
+
+      const widget = zebar.currentWidget();
+
+      const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
+      const specsScript = `${packDir}\\scripts\\specs.ps1`;
+
+      /*
+       * The static half of this panel comes from scripts/specs.ps1: model,
+       * graphics, Windows edition, serial. None of it is available through a
+       * provider, and none of it changes while the panel is open, so it is read
+       * once. The live half (memory fitted, disk size, uptime) comes from the
+       * providers, which is also why this panel is worth having over
+       * ms-settings:about, where the numbers are frozen at page load.
+       */
+      const cpu = zebar.createProvider({ type: 'cpu', refreshInterval: 60000 });
+      const memory = zebar.createProvider({
+        type: 'memory',
+        refreshInterval: 60000,
+      });
+      const host = zebar.createProvider({ type: 'host', refreshInterval: 60000 });
+      const disk = zebar.createProvider({ type: 'disk', refreshInterval: 60000 });
+
+      const el = {
+        deviceName: document.getElementById('device-name'),
+        model: document.getElementById('model'),
+        rows: document.getElementById('rows'),
+      };
+
+      let specs = null;
+      let cpuOutput = null;
+      let memoryOutput = null;
+      let hostOutput = null;
+      let diskOutput = null;
+
+      function gb(bytes) {
+        const value = bytes / 1024 / 1024 / 1024;
+
+        if (value < 10) return value.toFixed(1) + ' GB';
+        return Math.round(value) + ' GB';
+      }
+
+      function humanDuration(seconds) {
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+
+        if (days > 0) return days + ' d ' + (hours % 24) + ' h';
+        if (hours > 0)
+          return hours + ' h ' + String(minutes % 60).padStart(2, '0') + ' min';
+        return minutes + ' min';
+      }
+
+      // A row with nothing in it is left out rather than shown empty, so a
+      // machine that reports no serial simply has one line fewer.
+      function row(icon, label, value) {
+        if (value === null || value === undefined || value === '') return '';
+
+        return (
+          '<div class="panel-row">' +
+          '<i class="nf ' + icon + '"></i>' +
+          '<span class="row-label">' + label + '</span>' +
+          '<span class="row-value">' + value + '</span>' +
+          '</div>'
+        );
+      }
+
+      function processorText() {
+        // The model name from WMI is the readable one ("Intel Core Ultra 7
+        // 155H"); the provider only has the vendor. Cores come from the
+        // provider either way.
+        const name = specs?.processor || cpuOutput?.vendor || null;
+
+        if (!name) return null;
+        if (!cpuOutput) return name;
+
+        const cores =
+          cpuOutput.logicalCoreCount +
+          (cpuOutput.physicalCoreCount
+            ? ' threads / ' + cpuOutput.physicalCoreCount + ' cores'
+            : ' threads');
+
+        return name + '  ·  ' + cores;
+      }
+
+      function osText() {
+        if (!specs?.osName) return hostOutput?.friendlyOsVersion || null;
+
+        // "Windows 11 Pro" already says Windows; "24H2 · build 26100" is what
+        // the edition line is missing.
+        const parts = [specs.osName.replace(/^Microsoft /, '')];
+
+        if (specs.osVersion) parts.push(specs.osVersion);
+        if (specs.osBuild) parts.push('build ' + specs.osBuild);
+
+        return parts.join('  ·  ');
+      }
+
+      function systemDisk() {
+        const disks = diskOutput?.disks || [];
+
+        return (
+          disks.find(one =>
+            (one.mountPoint || '').toUpperCase().startsWith('C'),
+          ) ||
+          disks.find(one => !one.isRemovable) ||
+          disks[0] ||
+          null
+        );
+      }
+
+      function render() {
+        el.deviceName.textContent =
+          specs?.deviceName || hostOutput?.hostname || '--';
+
+        const model = [specs?.manufacturer, specs?.model]
+          .filter(Boolean)
+          .join(' ');
+
+        el.model.textContent = model;
+
+        const drive = systemDisk();
+
+        el.rows.innerHTML = [
+          row('nf-md-microsoft_windows', 'Windows', osText()),
+          row('nf-md-chip', 'Processor', processorText()),
+          row(
+            'nf-md-memory',
+            'Memory',
+            memoryOutput ? gb(memoryOutput.totalMemory) : null,
+          ),
+          row(
+            'nf-md-expansion_card_variant',
+            'Graphics',
+            specs?.graphics?.length ? specs.graphics.join(', ') : null,
+          ),
+          row(
+            'nf-md-harddisk',
+            'Storage',
+            drive && drive.totalSpace
+              ? gb(drive.totalSpace.bytes) +
+                  (drive.availableSpace
+                    ? '  ·  ' + gb(drive.availableSpace.bytes) + ' free'
+                    : '')
+              : null,
+          ),
+          row('nf-md-cpu_64_bit', 'Architecture', specs?.architecture),
+          row(
+            'nf-md-timer_outline',
+            'Uptime',
+            hostOutput?.uptime ? humanDuration(hostOutput.uptime) : null,
+          ),
+          row('nf-md-barcode', 'Serial', specs?.serial),
+          row('nf-md-memory', 'BIOS', specs?.biosVersion),
+        ].join('');
+      }
+
+      async function loadSpecs() {
+        try {
+          const result = await zebar.shellExec('powershell.exe', [
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            specsScript,
+          ]);
+
+          specs = JSON.parse((result.stdout || '').trim());
+        } catch (error) {
+          // The provider half of the panel still renders. Nothing is reported
+          // on screen: a missing serial is not worth an error message.
+          console.warn('specs lookup failed:', error);
+        }
+
+        render();
+      }
+
+      cpu.onOutput(output => {
+        cpuOutput = output;
+        render();
+      });
+
+      memory.onOutput(output => {
+        memoryOutput = output;
+        render();
+      });
+
+      host.onOutput(output => {
+        hostOutput = output;
+        render();
+      });
+
+      disk.onOutput(output => {
+        diskOutput = output;
+        render();
+      });
+
+      render();
+      loadSpecs();
+
+      /* Closing is done from outside, by the helper the bar starts when it opens
+         this panel (see window-ctl.ps1). Escape here is a bonus. */
+      // Animate out first, then close: the window is transparent, so a short
+      // fade and lift is visible before it disappears.
+      function close() {
+        const panel = document.querySelector('.panel');
+
+        if (!panel || panel.classList.contains('closing')) {
+          widget.close();
+          return;
+        }
+
+        panel.classList.add('closing');
+        setTimeout(() => widget.close(), 130);
+      }
+
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+      });
+
+      /*
+       * The card no longer fills its window, so there is a transparent strip
+       * below it that belongs to this panel. A click there used to dismiss,
+       * because it landed outside the window; now it lands inside one. Treat it
+       * as what it looks like: a click outside the card.
+       */
+      window.addEventListener('mousedown', event => {
+        if (!event.target.closest('.panel')) close();
+      });
+    </script>
+  </body>
+</html>

@@ -248,10 +248,26 @@ body.is-floating #root {
   background: transparent;
 }
 
+/*
+ * The card is sized by its contents, not by its window.
+ *
+ * It used to be `height: 100%`, which meant the preset height in zpack.json was
+ * the card height, and the leftover showed up as dead space under the last row.
+ * There is no single right number for that: the media panel has no artist or
+ * album line when nothing is playing, the system panel drops the swap row on a
+ * machine with no pagefile, the storage panel has a block per disk. Any height
+ * that fits the full case is too tall for the usual one.
+ *
+ * So the window stays a little larger than it needs to be and the card ends
+ * where its content ends, giving every panel the same 12px below its last row.
+ * The window must never be *smaller* than the card, or the card is clipped: the
+ * heights in zpack.json are upper bounds now, and a new row means checking the
+ * panel still fits.
+ */
 .panel {
   box-sizing: border-box;
   position: relative;
-  height: 100%;
+  height: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -732,6 +748,42 @@ body.is-floating #root {
 .control-slider:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/*
+ * About panel (see about-panel.html). The device name is the heading, the model
+ * sits under it, and everything else is a labelled row like the system panel.
+ */
+.about-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.about-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.about-model {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* Graphics adapters and processor names are long. They wrap rather than being
+   cut off, because a truncated part number is no use to anyone. */
+.about-panel .panel-row {
+  align-items: flex-start;
+}
+
+.about-panel .row-value {
+  flex: 1;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.about-panel .row-label {
+  flex: 0 0 auto;
 }
 
 /*

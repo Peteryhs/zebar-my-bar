@@ -25,7 +25,8 @@
     <link rel="modulepreload" href="./assets/vendor/tauri-core.js" />
     <link rel="modulepreload" href="./assets/vendor/tauri-event.js" />
     <link rel="modulepreload" href="./assets/vendor/tauri-window.js" />
-    <link rel="modulepreload" href="./assets/vendor/glazewm.js" />  </head>
+    <link rel="modulepreload" href="./assets/vendor/glazewm.js" />
+  </head>
   <body class="panel-body">
     <div class="panel system-panel">
       <div class="panel-header">
@@ -221,6 +222,16 @@
 
       window.addEventListener('keydown', event => {
         if (event.key === 'Escape') close();
+      });
+
+      /*
+       * The card no longer fills its window, so there is a transparent strip
+       * below it that belongs to this panel. A click there used to dismiss,
+       * because it landed outside the window; now it lands inside one. Treat it
+       * as what it looks like: a click outside the card.
+       */
+      window.addEventListener('mousedown', event => {
+        if (!event.target.closest('.panel')) close();
       });
     </script>
   </body>

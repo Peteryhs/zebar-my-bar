@@ -248,7 +248,7 @@
           "offsetX": "8px",
           "offsetY": "44px",
           "width": "250px",
-          "height": "356px",
+          "height": "344px",
           "monitorSelection": {
             "type": "primary"
           },
@@ -264,7 +264,7 @@
           "offsetX": "8px",
           "offsetY": "44px",
           "width": "250px",
-          "height": "356px",
+          "height": "344px",
           "monitorSelection": {
             "type": "secondary"
           },
@@ -571,6 +571,69 @@
           "height": "104px",
           "monitorSelection": {
             "type": "all"
+          },
+          "dockToEdge": {
+            "enabled": false,
+            "edge": null,
+            "windowMargin": "0px"
+          }
+        }
+      ]
+    },
+    {
+      "name": "about-panel",
+      "htmlPath": "./about-panel.html",
+      "zOrder": "top_most",
+      "shownInTaskbar": false,
+      "focused": false,
+      "resizable": false,
+      "transparent": true,
+      "includeFiles": [
+        "*.html",
+        "*.css",
+        "assets/*",
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
+      ],
+      "caching": {
+        "defaultDuration": 604800,
+        "rules": []
+      },
+      "privileges": {
+        "shellCommands": [
+          {
+            "program": "powershell.exe",
+            "argsRegex": "-NoProfile -ExecutionPolicy Bypass -File .*\\\\specs\\.ps1$"
+          }
+        ]
+      },
+      "presets": [
+        {
+          "name": "primary",
+          "anchor": "top_left",
+          "offsetX": "8px",
+          "offsetY": "44px",
+          "width": "360px",
+          "height": "360px",
+          "monitorSelection": {
+            "type": "primary"
+          },
+          "dockToEdge": {
+            "enabled": false,
+            "edge": null,
+            "windowMargin": "0px"
+          }
+        },
+        {
+          "name": "secondary",
+          "anchor": "top_left",
+          "offsetX": "8px",
+          "offsetY": "44px",
+          "width": "360px",
+          "height": "360px",
+          "monitorSelection": {
+            "type": "secondary"
           },
           "dockToEdge": {
             "enabled": false,

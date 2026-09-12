@@ -12,6 +12,7 @@
 .nf-fa-battery_3:before{content:"\f241"}
 .nf-fa-battery_4:before{content:"\f240"}
 .nf-fae-chip:before{content:"\e266"}
+.nf-md-barcode:before{content:"\f0071"}
 .nf-md-battery:before{content:"\f0079"}
 .nf-md-battery_charging:before{content:"\f0084"}
 .nf-md-bluetooth:before{content:"\f00af"}
@@ -22,6 +23,8 @@
 .nf-md-chip:before{content:"\f061a"}
 .nf-md-cog:before{content:"\f0493"}
 .nf-md-counter:before{content:"\f0199"}
+.nf-md-cpu_64_bit:before{content:"\f0ee0"}
+.nf-md-expansion_card_variant:before{content:"\f0fb2"}
 .nf-md-flash_outline:before{content:"\f06d5"}
 .nf-md-harddisk:before{content:"\f02ca"}
 .nf-md-heart_pulse:before{content:"\f05f6"}
@@ -30,6 +33,7 @@
 .nf-md-lock:before{content:"\f033e"}
 .nf-md-logout:before{content:"\f0343"}
 .nf-md-memory:before{content:"\f035b"}
+.nf-md-microsoft_windows:before{content:"\f05b3"}
 .nf-md-monitor:before{content:"\f0379"}
 .nf-md-music:before{content:"\f075a"}
 .nf-md-pause:before{content:"\f03e4"}
