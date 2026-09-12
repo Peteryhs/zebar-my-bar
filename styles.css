@@ -819,7 +819,7 @@ body.is-floating #root {
   min-width: 260px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
   border-left: 1px solid rgb(255 255 255 / 8%);
   padding-left: 14px;
   align-self: stretch;
@@ -858,22 +858,19 @@ body.is-floating #root {
  * Hours are a fixed height for the same reason they were a fixed width: distance
  * has to mean duration, so a long day scrolls rather than compressing.
  */
+/*
+ * Takes whatever height is left and the day is scaled into it, so there is nothing
+ * to scroll: the whole day is on screen or it is not the whole day.
+ *
+ * Which means the hour height is worked out at render time from this element's own
+ * height, rather than the day being laid out at a fixed scale and the panel growing
+ * to fit. The panel's height is set by the month grid beside it.
+ */
 .cal-timeline {
   position: relative;
-  max-height: 340px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: rgb(255 255 255 / 20%) transparent;
-}
-
-.cal-timeline::-webkit-scrollbar {
-  width: 5px;
-}
-
-.cal-timeline::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 18%);
-  border-radius: 3px;
+  flex: 1;
+  min-height: 176px;
+  overflow: hidden;
 }
 
 .cal-track {
@@ -891,11 +888,11 @@ body.is-floating #root {
 
 .cal-hour-label {
   position: absolute;
-  top: -6px;
+  top: -5px;
   left: 0;
-  width: 34px;
+  width: 30px;
   text-align: right;
-  font-size: 9px;
+  font-size: 8px;
   letter-spacing: 0.04em;
   opacity: 0.4;
   font-variant-numeric: tabular-nums;
@@ -907,7 +904,7 @@ body.is-floating #root {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 42px;
+  left: 36px;
   right: 0;
 }
 
@@ -918,17 +915,17 @@ body.is-floating #root {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 1px;
-  padding: 3px 7px;
-  border-radius: 5px;
+  gap: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
   background: rgb(255 255 255 / 10%);
   overflow: hidden;
+  line-height: 1.25;
 }
 
 /* Too short to carry two lines, so it carries the one that matters. */
 .cal-block.is-short {
-  padding: 1px 7px;
-  justify-content: center;
+  padding: 0 6px;
 }
 
 .cal-block.is-short .cal-block-time {
@@ -936,8 +933,8 @@ body.is-floating #root {
 }
 
 .cal-block-time {
-  font-size: 9px;
-  opacity: 0.75;
+  font-size: 8px;
+  opacity: 0.7;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
@@ -945,7 +942,7 @@ body.is-floating #root {
 }
 
 .cal-block-title {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -972,7 +969,7 @@ body.is-floating #root {
    sit on top of them. */
 .cal-now {
   position: absolute;
-  left: 42px;
+  left: 36px;
   right: 0;
   height: 2px;
   margin-top: -1px;
@@ -993,11 +990,11 @@ body.is-floating #root {
 
 .cal-now-label {
   position: absolute;
-  top: -6px;
-  left: -42px;
-  width: 34px;
+  top: -5px;
+  left: -36px;
+  width: 30px;
   text-align: right;
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 600;
   color: #ff7a7a;
   font-variant-numeric: tabular-nums;
@@ -1012,10 +1009,10 @@ body.is-floating #root {
 }
 
 .cal-allday-item {
-  padding: 3px 7px;
-  border-radius: 5px;
+  padding: 2px 6px;
+  border-radius: 4px;
   background: rgb(255 255 255 / 10%);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -1042,9 +1039,9 @@ body.is-floating #root {
 .cal-upnext {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
-  border-radius: 7px;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 6px;
   background: rgb(255 196 107 / 18%);
   border: 1px solid rgb(255 196 107 / 45%);
 }
@@ -1084,25 +1081,25 @@ body.is-floating #root {
 
 .cal-weekday {
   text-align: center;
-  font-size: 10px;
+  font-size: 9px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   opacity: 0.45;
-  padding-bottom: 2px;
+  padding-bottom: 1px;
 }
 
 .cal-day {
   position: relative;
-  aspect-ratio: 1;
+  height: 25px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   background: none;
   color: inherit;
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
@@ -1130,7 +1127,7 @@ body.is-floating #root {
 .cal-day.has-events::after {
   content: '';
   position: absolute;
-  bottom: 3px;
+  bottom: 2px;
   width: 3px;
   height: 3px;
   border-radius: 50%;

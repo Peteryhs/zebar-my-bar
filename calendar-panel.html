@@ -218,14 +218,19 @@
         el.days.innerHTML = cells.join('');
       }
 
-      // How tall an hour is. Fixed, so distance means duration; a long day scrolls
-      // rather than compressing until nothing can be read.
-      const HOUR_HEIGHT = 48;
-      const MIN_BLOCK_PX = 15;
+      // The day is scaled into the height available rather than laid out at a fixed
+      // scale, so it is always all on screen with nothing to scroll to. An hour is
+      // therefore worth more pixels on a quiet day than on a long one, but within
+      // any one day distance still means duration, which is what the shape of the
+      // day is read from.
+      const MIN_TRACK_PX = 176;
+      const MIN_BLOCK_PX = 10;
       // Below this a block cannot carry both its time and its title, so it carries
       // the title.
-      const SHORT_BLOCK_PX = 30;
+      const SHORT_BLOCK_PX = 26;
       const COLUMN_GAP_PC = 2;
+      // An hour line needs this much room before the next one, or the labels collide.
+      const MIN_HOUR_GAP_PX = 15;
 
       /*
        * Groups of events that overlap, directly or through a chain of others, and
@@ -293,8 +298,6 @@
         };
       }
 
-      let scrolledForDay = null;
-
       function renderDay() {
         const now = new Date();
         const forDay = eventsByDay().get(dayKey(selected)) || [];
@@ -351,12 +354,27 @@
         if ((to - from) < 3 * 3600000) to = new Date(from.getTime() + 3 * 3600000);
 
         const spanMs = to - from;
-        const trackHeight = Math.round((spanMs / 3600000) * HOUR_HEIGHT);
+
+        /*
+         * The room this has to work with. Measured from the element, which the
+         * layout has already stretched to fill what the month grid beside it leaves
+         * over — so the day fits the panel rather than the panel growing to fit the
+         * day.
+         */
+        const trackHeight = Math.max(MIN_TRACK_PX, el.timeline.clientHeight || 0);
         const yOf = when => Math.round(((when - from) / spanMs) * trackHeight);
 
+        const hourHeight = trackHeight / (spanMs / 3600000);
+        // Every hour if they fit, otherwise every second or third, so the labels stay
+        // legible on a long day instead of piling into each other.
+        const hourStep = Math.max(1, Math.ceil(MIN_HOUR_GAP_PX / hourHeight));
+
         const hours = [];
+        let index = 0;
 
         for (let at = new Date(from); at <= to; at = new Date(at.getTime() + 3600000)) {
+          if (index++ % hourStep !== 0) continue;
+
           hours.push(
             '<div class="cal-hour" style="top: ' + yOf(at) + 'px">' +
               '<span class="cal-hour-label">' +
@@ -397,19 +415,6 @@
           '<div class="cal-lanes">' + blocks.join('') + '</div>' +
           marker +
           '</div>';
-
-        /*
-         * Bring the interesting part into view once per day shown, not on every
-         * redraw: the half minute tick would otherwise keep yanking the view back
-         * while it was being read.
-         */
-        const key = dayKey(selected);
-
-        if (scrolledForDay !== key) {
-          scrolledForDay = key;
-          const focus = isToday ? yOf(now) : yOf(timed[0].start);
-          el.timeline.scrollTop = Math.max(0, focus - 70);
-        }
       }
       /*
        * The next event about to start, if it is close enough to be worth saying so.
@@ -443,10 +448,16 @@
           '</span>';
       }
 
+      /*
+       * Order matters here. The day is scaled to the height it is given, so anything
+       * above it has to be in place first: draw the warning afterwards and the day
+       * would have been measured against room the warning was about to take, and its
+       * last half hour would fall off the bottom.
+       */
       function render() {
         renderMonth();
-        renderDay();
         renderUpNext();
+        renderDay();
       }
 
       el.days.addEventListener('click', event => {
@@ -536,8 +547,8 @@
        * moves on its own, and so does the countdown on the warning.
        */
       const ticking = setInterval(() => {
-        renderDay();
         renderUpNext();
+        renderDay();
       }, 30000);
 
       window.addEventListener('beforeunload', () => clearInterval(ticking));
