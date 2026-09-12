@@ -262,6 +262,19 @@
         });
       }
 
+      /*
+       * Closing goes through a one-shot window-ctl, not through the guard.
+       *
+       * The guard takes commands on stdin and the bar used to send them there,
+       * which was cheaper: no process to start. It never worked. Zebar's
+       * shellWrite resolves without delivering anything, so the write looked
+       * successful from here, the guard never saw a line, and every close the bar
+       * asked for silently did not happen. The guard's own trace file has no
+       * record of a single command in months of use, which is what gave it away.
+       *
+       * Not awaited: the process takes a couple of hundred milliseconds to start
+       * and the click has better things to do.
+       */
       function closeAllPanels() {
         if (![...panels.values()].some(one => one.open)) return;
 
@@ -269,27 +282,33 @@
           one.open = false;
         });
 
-        if (panelGuard) {
-          panelGuard.write('close all\n');
-        } else {
-          closeWidget(PANEL_NAMES.join(','));
-        }
+        closeWidget(PANEL_NAMES.join(','));
       }
 
       /*
-       * The guard no longer dismisses a panel when the click landed on the bar,
-       * so the bar has to do it: a click on a part of the bar that does nothing
-       * (the clock, the gaps between tiles) still closes whatever is open, the
-       * way it did when the guard treated the bar as just another elsewhere.
+       * The guard does not dismiss a panel when the click landed on the bar, so
+       * the bar has to: a click on a part of the bar that does nothing (the
+       * clock, the gaps between tiles) still closes whatever is open, the way it
+       * did when the guard treated the bar as just another elsewhere.
+       *
+       * `click` in the capture phase, not `mousedown`. The first attempt at this
+       * used mousedown and never fired once, while the tiles beside it worked
+       * throughout, so something in the page is having that event first. Capture
+       * runs before anything can stop propagation, and click is the event the
+       * tiles are already proving arrives.
        *
        * Tiles are excluded because their own handler decides: toggleWidget knows
        * whether that tile's panel is the one already open.
        */
-      window.addEventListener('mousedown', event => {
-        if (event.target.closest('.clickable')) return;
+      window.addEventListener(
+        'click',
+        event => {
+          if (event.target.closest('.clickable')) return;
 
-        closeAllPanels();
-      });
+          closeAllPanels();
+        },
+        true,
+      );
 
       // Start the guard now instead of on the first click, so even the first
       // panel is watched from the moment it appears.

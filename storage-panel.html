@@ -40,8 +40,12 @@
 
     <script type="module">
       import * as zebar from './assets/vendor/zebar.js';
+      import { fitWindowToCard } from './assets/panel.js';
 
       const widget = zebar.currentWidget();
+
+      // Keep this window the same height as the card (see assets/panel.js).
+      fitWindowToCard(widget);
 
 
 
@@ -150,15 +154,6 @@
         if (event.key === 'Escape') close();
       });
 
-      /*
-       * The card no longer fills its window, so there is a transparent strip
-       * below it that belongs to this panel. A click there used to dismiss,
-       * because it landed outside the window; now it lands inside one. Treat it
-       * as what it looks like: a click outside the card.
-       */
-      window.addEventListener('mousedown', event => {
-        if (!event.target.closest('.panel')) close();
-      });
     </script>
   </body>
 </html>
