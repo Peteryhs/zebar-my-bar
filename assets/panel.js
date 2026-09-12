@@ -31,6 +31,7 @@ export function fitWindowToCard(widget, selector = '.panel') {
 
   const tauriWindow = widget.tauriWindow;
   let lastHeight = 0;
+  let lastWidth = 0;
 
   function fit() {
     const rect = card.getBoundingClientRect();
@@ -42,9 +43,19 @@ export function fitWindowToCard(widget, selector = '.panel') {
     // The window width is left alone: it is the preset's, and the card fills it.
     const width = document.documentElement.clientWidth;
 
-    if (height === lastHeight || height <= 0) return;
+    if (height <= 0) return;
+
+    /*
+     * The width is watched as well as the height. A panel's window is created at
+     * a default size and moved into its preset afterwards, so this can run while
+     * the window is still the wrong width, where the card wraps differently and
+     * is therefore the wrong height. When the width changes the height is worked
+     * out again rather than trusted.
+     */
+    if (height === lastHeight && width === lastWidth) return;
 
     lastHeight = height;
+    lastWidth = width;
 
     // A plain object rather than LogicalSize, which moved modules between Tauri
     // versions. setSize only looks at these three fields.

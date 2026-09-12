@@ -34,9 +34,10 @@ param(
   [Parameter(Mandatory = $true)][ValidateSet('close', 'guard')][string]$Action,
   [Parameter(Mandatory = $true)][string]$Match,
   [string]$Owner = 'default',
-  [int]$TickMs = 100,
+  [int]$TickMs = 20,
   [int]$ScanMs = 300,
   [int]$GraceMs = 250,
+  [int]$HousekeepingMs = 5000,
   [int]$MaxLifetimeMinutes = 240
 )
 
@@ -198,19 +199,26 @@ function Close-Window([int64]$handle) {
   return (-not $survived)
 }
 
-# Bit 0x0001 means "pressed since the previous call", so a click that lands
-# between two polls is still caught. Every button is read every time rather than
-# stopping at the first hit: an unread bit stays set and reads as a click later.
-function Test-ClickedSinceLastCheck {
-  $pressed = $false
-
+# Is any mouse button down right now.
+#
+# The high bit is the button's actual state and is true for as long as the button
+# is held. The low bit of the same call means "pressed since the previous call",
+# which is the obvious thing to use here and is why clicks went missing: Windows
+# documents it as unreliable, and the reason is that it is cleared by whichever
+# caller reads it next. Any other process on the machine polling input consumes the
+# press before this one gets its turn, so a click would be silently lost, at random,
+# and the panel needed clicking again.
+#
+# The press edge is worked out below instead, from this state, which nothing else
+# can take away.
+function Test-ButtonDown {
   foreach ($virtualKey in 0x01, 0x02, 0x04) {
-    if (([ZebarWin.Native]::GetAsyncKeyState($virtualKey) -band 0x0001) -ne 0) {
-      $pressed = $true
+    if (([ZebarWin.Native]::GetAsyncKeyState($virtualKey) -band 0x8000) -ne 0) {
+      return $true
     }
   }
 
-  return $pressed
+  return $false
 }
 
 function Get-CursorPoint {
@@ -276,18 +284,19 @@ $stdin = New-Object System.IO.StreamReader ([Console]::OpenStandardInput())
 $pendingRead = $stdin.ReadLineAsync()
 
 $lastScan = (Get-Date).AddYears(-1)
+$lastHousekeeping = Get-Date
+# Whether a mouse button was down on the previous poll, which is how a press is
+# told from a hold.
+$wasButtonDown = Test-ButtonDown
 $active = @()
 # A closed window can linger for a moment, so remember what we just closed to
 # avoid attaching to it again on the next scan.
 $recentlyClosed = @{}
-$tick = 0
 $lifeDeadline = (Get-Date).AddMinutes($MaxLifetimeMinutes)
 
 Write-Trace ('guard start names={0} pid={1} owner={2}' -f ($matchNames -join '|'), $PID, $ownerKey)
 
 while ($true) {
-  $tick++
-
   if ($pendingRead.IsCompleted) {
     $line = ''
 
@@ -305,7 +314,13 @@ while ($true) {
     $pendingRead = $stdin.ReadLineAsync()
   }
 
-  $clicked = Test-ClickedSinceLastCheck
+  # A click is the moment a button goes from up to down. Watching the state means
+  # the poll has to be quick enough to land inside the press: a click is held for
+  # something like 50 to 150ms, so $TickMs is 20 rather than 100.
+  $buttonDown = Test-ButtonDown
+  $clicked = $buttonDown -and -not $wasButtonDown
+  $wasButtonDown = $buttonDown
+
   $now = Get-Date
 
   # Every click this process sees is written down, whatever it decides to do
@@ -408,7 +423,10 @@ while ($true) {
         }
       )
 
-      [void](Test-ClickedSinceLastCheck) # swallow the click that opened it
+      # Swallow the click that opened the panel: if the button is still held, take
+      # the current state as the baseline so releasing it cannot read as a new
+      # press. The grace period below covers the rest.
+      $wasButtonDown = Test-ButtonDown
 
       $rect = Get-WindowRect ([int64]$handle)
       Write-Event ('open {0}' -f $name)
@@ -418,10 +436,15 @@ while ($true) {
     }
   }
 
-  # Every ~5 seconds: step aside if a newer guard for this display claimed the pid
+  # Every few seconds: step aside if a newer guard for this display claimed the pid
   # file, exit if Zebar is gone, and give up after the lifetime cap so a stray
   # guard cannot linger forever (the bar starts a fresh one).
-  if (($tick % 50) -eq 0) {
+  #
+  # Timed rather than counted in ticks, so the tick rate can change without
+  # quietly turning this into a busy loop.
+  if (($now - $lastHousekeeping).TotalMilliseconds -ge $HousekeepingMs) {
+    $lastHousekeeping = $now
+
     $claimedOwner = ''
 
     try {
