@@ -183,6 +183,19 @@ function Close-Window([int64]$handle) {
   [void][ZebarWin.Native]::SendMessageTimeout(
     $hwnd, $WM_CLOSE, [System.IntPtr]::Zero,
     [System.IntPtr]::Zero, $SMTO_ABORTIFHUNG, 2000, [ref]$result)
+
+  # Whether WM_CLOSE was actually honoured. A window that survives it but has
+  # already been reported closed is invisible to everything upstream: the panel
+  # stays on screen, the bar believes it is gone, and the next click is spent
+  # discovering that. Traced so it can never be a silent assumption again.
+  Start-Sleep -Milliseconds 120
+  $survived = [ZebarWin.Native]::IsWindow($hwnd)
+
+  if ($survived) {
+    Write-Trace ('  WM_CLOSE ignored, window {0} still alive' -f $handle)
+  }
+
+  return (-not $survived)
 }
 
 # Bit 0x0001 means "pressed since the previous call", so a click that lands
@@ -200,14 +213,27 @@ function Test-ClickedSinceLastCheck {
   return $pressed
 }
 
-function Test-PointerInsideWindow([int64]$handle) {
+function Get-CursorPoint {
   $point = New-Object ZebarWin.Native+POINT
-  $rect = New-Object ZebarWin.Native+RECT
   [void][ZebarWin.Native]::GetCursorPos([ref]$point)
+
+  return $point
+}
+
+function Get-WindowRect([int64]$handle) {
+  $rect = New-Object ZebarWin.Native+RECT
   [void][ZebarWin.Native]::GetWindowRect([System.IntPtr]$handle, [ref]$rect)
 
+  return $rect
+}
+
+function Test-PointInsideRect($point, $rect) {
   return ($point.X -ge $rect.Left -and $point.X -lt $rect.Right -and
           $point.Y -ge $rect.Top -and $point.Y -lt $rect.Bottom)
+}
+
+function Test-PointerInsideWindow([int64]$handle) {
+  return Test-PointInsideRect (Get-CursorPoint) (Get-WindowRect $handle)
 }
 
 if ($Action -eq 'close') {
@@ -282,10 +308,43 @@ while ($true) {
   $clicked = Test-ClickedSinceLastCheck
   $now = Get-Date
 
+  # Every click this process sees is written down, whatever it decides to do
+  # about it, along with everything the decision was made from. A click that is
+  # detected and deliberately dropped and a click that is never detected at all
+  # look identical from the far side of the screen, and telling those two apart
+  # is the whole difficulty.
+  if ($clicked) {
+    $point = Get-CursorPoint
+
+    if ($active.Count -eq 0) {
+      Write-Trace ('CLICK at {0},{1} -> no panel is being watched' -f $point.X, $point.Y)
+    }
+
+    foreach ($entry in @($active)) {
+      $rect = Get-WindowRect $entry.Handle
+      $inside = Test-PointInsideRect $point $rect
+      $age = [int]($now - $entry.AttachedAt).TotalMilliseconds
+
+      $verdict = if ($age -lt $GraceMs) {
+        "ignored, within the {0}ms grace after opening" -f $GraceMs
+      } elseif ($inside) {
+        'ignored, inside the panel'
+      } else {
+        'dismissing'
+      }
+
+      Write-Trace (
+        'CLICK at {0},{1} panel={2} hwnd={3} rect={4},{5}-{6},{7} inside={8} age={9}ms -> {10}' -f
+          $point.X, $point.Y, $entry.Name, $entry.Handle,
+          $rect.Left, $rect.Top, $rect.Right, $rect.Bottom,
+          $inside, $age, $verdict)
+    }
+  }
+
   foreach ($entry in @($active)) {
     if (-not [ZebarWin.Native]::IsWindow([System.IntPtr]$entry.Handle)) {
       Write-Event ('gone {0}' -f $entry.Name)
-      Write-Trace ('guard detach name={0} reason=window-gone' -f $entry.Name)
+      Write-Trace ('guard detach name={0} hwnd={1} reason=window-gone' -f $entry.Name, $entry.Handle)
       $active = @($active | Where-Object { $_ -ne $entry })
       continue
     }
@@ -297,10 +356,10 @@ while ($true) {
     }
 
     if ($clicked -and -not (Test-PointerInsideWindow $entry.Handle)) {
-      Close-Window $entry.Handle
+      $died = Close-Window $entry.Handle
       $recentlyClosed[[string]$entry.Handle] = $now
       Write-Event ('closed {0}' -f $entry.Name)
-      Write-Trace ('guard closed name={0} reason=click-outside' -f $entry.Name)
+      Write-Trace ('guard closed name={0} hwnd={1} reason=click-outside died={2}' -f $entry.Name, $entry.Handle, $died)
       $active = @($active | Where-Object { $_ -ne $entry })
     }
   }
@@ -335,10 +394,10 @@ while ($true) {
       # One panel at a time. This is the only place that sees a panel however it
       # was opened, including from the command line or by another widget.
       foreach ($other in @($active)) {
-        Close-Window $other.Handle
+        $died = Close-Window $other.Handle
         $recentlyClosed[[string]$other.Handle] = $now
         Write-Event ('closed {0}' -f $other.Name)
-        Write-Trace ('guard closed name={0} reason=replaced-by-{1}' -f $other.Name, $name)
+        Write-Trace ('guard closed name={0} hwnd={1} reason=replaced-by-{2} died={3}' -f $other.Name, $other.Handle, $name, $died)
       }
 
       $active = @(
@@ -350,8 +409,12 @@ while ($true) {
       )
 
       [void](Test-ClickedSinceLastCheck) # swallow the click that opened it
+
+      $rect = Get-WindowRect ([int64]$handle)
       Write-Event ('open {0}' -f $name)
-      Write-Trace ('guard attach name={0}' -f $name)
+      Write-Trace (
+        'guard attach name={0} hwnd={1} rect={2},{3}-{4},{5}' -f
+          $name, [int64]$handle, $rect.Left, $rect.Top, $rect.Right, $rect.Bottom)
     }
   }
 
