@@ -1,8 +1,18 @@
 /**
- * Import the Nerdfonts icon font.
- * Ref https://www.nerdfonts.com/cheat-sheet for a cheatsheet of available Nerdfonts icons.
+ * Icon font. Ref https://www.nerdfonts.com/cheat-sheet for the full set.
+ *
+ * assets/icons.css holds only the glyphs this pack actually uses. The full
+ * nerdfonts.css is 495KB and about ten thousand rules, and every panel is a new
+ * page that has to parse all of it before it can draw anything; the icons the bar
+ * and the panels name between them number a few dozen. assets/nerdfonts.css is
+ * kept as the source to regenerate from:
+ *
+ *   node scripts/build-icons.mjs
+ *
+ * Run that after using a glyph that was not used before, or its rule will be
+ * missing and the icon will come out as a blank box.
  */
-@import 'assets/nerdfonts.css';
+@import 'assets/icons.css';
 
 :root {
   --text-size: 12px;
@@ -744,28 +754,18 @@ body.is-floating #root {
 
 
 /*
- * Panels animate in, and out when the guard asks them to close (it sends Escape
- * first, then closes the window). The widget window is transparent, so the fade
- * and lift are visible.
+ * Panels do not animate in. A panel's window is created, navigated and painted
+ * when it opens, and an opening animation on top of that reads as more delay
+ * rather than as polish: the first thing you saw was a transparent window, then
+ * something fading up from nothing. Now the panel is simply there on the first
+ * frame it can be.
+ *
+ * Closing still animates, because there is nothing to wait for: the guard fades
+ * the window out with SetLayeredWindowAttributes and this is the page keeping
+ * step with it.
  */
-.panel {
-  animation: panel-in 100ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
 .panel.closing {
   animation: panel-out 165ms ease-in both;
-}
-
-@keyframes panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(-6px) scale(0.985);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 @keyframes panel-out {

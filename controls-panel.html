@@ -9,7 +9,7 @@
       woff2: three requests discovered one after another, with the icon glyphs
       not drawn until the last one lands. Preloading starts all three at once.
     -->
-    <link rel="preload" href="./assets/nerdfonts.css" as="style" />
+    <link rel="preload" href="./assets/icons.css" as="style" />
     <link rel="preload" href="./assets/nerdfont.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" type="text/css" href="./styles.css" />
     <!--
@@ -202,6 +202,11 @@
       let brightnessServer = null;
       let draggingBrightness = false;
       let brightnessSupported = true;
+      // The server is only used once it has answered a ping. Writing to a
+      // spawned process's stdin either works or silently does nothing, and there
+      // is no way to tell from here which one happened, so the panel proves the
+      // pipe before it depends on it and runs one process per change until then.
+      let serverAnswered = false;
 
       function markUnsupported() {
         brightnessSupported = false;
@@ -234,6 +239,11 @@
         server.onStdout(line => {
           const text = line.trim();
 
+          if (text === 'pong') {
+            serverAnswered = true;
+            return;
+          }
+
           if (text === 'unsupported') {
             markUnsupported();
             return;
@@ -250,9 +260,16 @@
 
         server.onExit(() => {
           brightnessServer = null;
+          serverAnswered = false;
         });
 
         brightnessServer = server;
+
+        try {
+          await server.write('ping\n');
+        } catch (error) {
+          console.warn('brightness server write failed:', error);
+        }
       }
 
       /*
@@ -306,8 +323,12 @@
         el.brightnessIcon.className =
           'nf ' + (level > 60 ? 'nf-md-brightness_7' : 'nf-md-brightness_5');
 
-        if (brightnessServer) {
-          brightnessServer.write(level + '\n');
+        if (brightnessServer && serverAnswered) {
+          Promise.resolve(brightnessServer.write(level + '\n')).catch(() => {
+            // The pipe died under us. Everything from here goes the slow way.
+            serverAnswered = false;
+            pushBrightnessFallback(level);
+          });
         } else {
           pushBrightnessFallback(level);
         }
@@ -316,6 +337,38 @@
       el.brightnessSlider.addEventListener('change', () => {
         draggingBrightness = false;
       });
+
+      /*
+       * Read the level once at load through a plain one-shot call, so the slider
+       * is in the right place even if the server never comes up. The server
+       * reports the level too, but only if its pipe turns out to work.
+       */
+      async function readBrightnessOnce() {
+        try {
+          const result = await zebar.shellExec('powershell.exe', [
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            brightnessScript,
+            '-Action',
+            'get',
+          ]);
+
+          const level = Number((result.stdout || '').trim());
+
+          if (!Number.isFinite(level) || level < 0) {
+            markUnsupported();
+            return;
+          }
+
+          showBrightness(level);
+        } catch (error) {
+          console.warn('brightness read failed:', error);
+        }
+      }
+
+      readBrightnessOnce();
 
       startBrightnessServer().catch(error => {
         console.warn('brightness server failed to start:', error);

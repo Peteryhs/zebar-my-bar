@@ -108,10 +108,14 @@ $pendingRead = $stdin.ReadLineAsync()
 $lastActivity = Get-Date
 $ticks = 0
 
+function Write-Line([string]$text) {
+  [Console]::Out.WriteLine($text)
+  [Console]::Out.Flush()
+}
+
 # Report the starting level, so the panel can draw the slider without a separate
 # one-shot call.
-[Console]::Out.WriteLine((Get-Brightness))
-[Console]::Out.Flush()
+Write-Line (Get-Brightness)
 
 while ($true) {
   # Drain everything queued and keep only the newest level. A fast drag puts
@@ -143,9 +147,18 @@ while ($true) {
       break
     }
 
+    # The panel sends this once on startup and only trusts the pipe after the
+    # answer comes back. Writing to a spawned process's stdin is the one part of
+    # this that the page cannot check any other way: a write that goes nowhere
+    # looks exactly like a write that worked.
+    if ($trimmed -eq 'ping') {
+      Write-Line 'pong'
+      $lastActivity = Get-Date
+      continue
+    }
+
     if ($trimmed -eq 'get') {
-      [Console]::Out.WriteLine((Get-Brightness))
-      [Console]::Out.Flush()
+      Write-Line (Get-Brightness)
       $lastActivity = Get-Date
       continue
     }
@@ -163,8 +176,7 @@ while ($true) {
     $applied = Set-Brightness $methods $wanted
 
     try {
-      [Console]::Out.WriteLine($(if ($applied) { $wanted } else { 'set failed' }))
-      [Console]::Out.Flush()
+      Write-Line $(if ($applied) { $wanted } else { 'set failed' })
     } catch {
       # Nobody is listening any more.
       break

@@ -12,7 +12,23 @@
  * where a temperature should be.
  */
 
+/*
+ * Set this to pin the location by hand and skip every lookup below. Coordinates
+ * to four decimal places is about ten metres, which is far finer than a forecast
+ * grid; two is plenty.
+ *
+ *   const LOCATION = { latitude: 51.5072, longitude: -0.1276, place: 'London' };
+ */
+const LOCATION = null;
+
 const COORDS_KEY = 'zebar-bar.coords';
+
+/*
+ * How the coordinates were found, worst to best. A better source replaces a
+ * cached worse one: an IP lookup can be a different city, and the temperature it
+ * returns is then someone else's.
+ */
+const SOURCE_RANK = { ip: 1, device: 2, manual: 3 };
 
 /*
  * Five attempts, with the gap growing between them. Roughly four minutes of
@@ -77,15 +93,49 @@ async function fetchJson(url) {
 }
 
 /*
- * Where we are. Cached in localStorage the first time it works, so ipinfo.io is
- * contacted once on a given machine and never again unless the cache is
- * cleared. That single point of failure is the whole reason the tile was dying.
+ * The device's own position, through Windows location services. This is the
+ * accurate one: an IP lookup returns wherever the address is registered, which
+ * for a phone hotspot, a VPN or a corporate network can be a different city and
+ * a materially different temperature.
+ *
+ * Resolves to null on anything at all: no permission, no location service, no
+ * fix. It is an upgrade over the IP guess, never a requirement.
  */
-export async function resolveCoords() {
-  const cached = readCache();
-  if (cached) return cached;
+function deviceCoords() {
+  if (!navigator.geolocation) return Promise.resolve(null);
 
-  const coords = await withRetry(async () => {
+  return new Promise(resolve => {
+    let settled = false;
+
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      position =>
+        finish({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          place: '',
+          source: 'device',
+        }),
+      error => {
+        console.warn('device location unavailable:', error.message);
+        finish(null);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 600000 },
+    );
+
+    // Some webview builds neither resolve nor reject when the permission has
+    // never been answered.
+    setTimeout(() => finish(null), 9000);
+  });
+}
+
+async function ipCoords() {
+  return withRetry(async () => {
     const info = await fetchJson('https://ipinfo.io/json');
     const [latitude, longitude] = String(info.loc || '')
       .split(',')
@@ -97,12 +147,56 @@ export async function resolveCoords() {
       latitude,
       longitude,
       place: info.city || info.region || info.country || '',
+      source: 'ip',
     };
-  }, 'geolocation');
+  }, 'ip geolocation');
+}
 
-  if (coords) writeCache(coords);
+/*
+ * Where we are, best source available, remembered in localStorage. The device
+ * position is tried on every start because it is cheap when it works and it
+ * upgrades a cached IP guess; the IP lookup only runs when there is nothing
+ * better and nothing cached, which is what stops it being a single point of
+ * failure for the whole tile.
+ */
+/*
+ * Whatever we can answer with without touching the network, so the first reading
+ * is not held up behind a location fix.
+ */
+export function knownCoords() {
+  if (LOCATION) return { ...LOCATION, source: 'manual' };
 
-  return coords;
+  return readCache();
+}
+
+// The device is asked once per session. A refused permission or a machine with
+// no location service would otherwise cost the timeout on every refresh.
+let devicePromise = null;
+
+export async function resolveCoords() {
+  if (LOCATION) return { ...LOCATION, source: 'manual' };
+
+  const cached = readCache();
+  const cachedRank = cached ? SOURCE_RANK[cached.source] || 0 : 0;
+
+  const device = await (devicePromise ??= deviceCoords());
+
+  if (device && SOURCE_RANK.device >= cachedRank) {
+    // Keep a place name we already know: the device gives coordinates only, and
+    // a blank label reads worse than the city we had.
+    if (!device.place && cached && cached.place) device.place = cached.place;
+
+    writeCache(device);
+    return device;
+  }
+
+  if (cached) return cached;
+
+  const fromIp = await ipCoords();
+
+  if (fromIp) writeCache(fromIp);
+
+  return fromIp;
 }
 
 export async function fetchWeather(coords) {
@@ -127,30 +221,50 @@ export async function fetchWeather(coords) {
 export function startWeather({ onUpdate, refreshMs = 900000 }) {
   let stopped = false;
   let timer = null;
+  let everShown = false;
+
+  const keyOf = coords => coords.latitude + ',' + coords.longitude;
+
+  // Returns the key it drew, or null if there was nothing to draw.
+  async function show(coords) {
+    const data = await fetchWeather(coords);
+
+    if (stopped || !data) return null;
+
+    everShown = true;
+
+    onUpdate({
+      place: coords.place || '',
+      current: data.current || null,
+      daily: data.daily || null,
+    });
+
+    return keyOf(coords);
+  }
 
   async function tick() {
     if (stopped) return;
 
-    const coords = await resolveCoords();
+    // Draw from what we already know first. Asking Windows for a position can
+    // take seconds the first time, and there is no reason for the tile to be
+    // empty while that happens.
+    const known = knownCoords();
+    const drawn = known ? await show(known) : null;
 
     if (stopped) return;
 
-    if (!coords) {
-      onUpdate(null);
-    } else {
-      const data = await fetchWeather(coords);
+    const best = await resolveCoords();
 
-      if (stopped) return;
+    if (stopped) return;
 
+    // Only fetched twice in a round when the better position turns out to be
+    // somewhere else, which is once, on the first start after a move.
+    if (!best) {
       // A failed refresh leaves the last good reading on screen rather than
       // blanking the tile: the previous value is still roughly true.
-      if (data) {
-        onUpdate({
-          place: coords.place || '',
-          current: data.current || null,
-          daily: data.daily || null,
-        });
-      }
+      if (!everShown) onUpdate(null);
+    } else if (keyOf(best) !== drawn) {
+      await show(best);
     }
 
     // Whether or not this round worked, come back at the normal interval. A
