@@ -4,7 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <!-- Custom styles. -->
     <!--
       styles.css @imports the icon font stylesheet, which in turn asks for the
       woff2: three requests discovered one after another, with the icon glyphs
@@ -13,29 +12,115 @@
     <link rel="preload" href="./assets/icons.css" as="style" />
     <link rel="preload" href="./assets/nerdfont.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" type="text/css" href="./styles.css" />
-    <!-- Allows React to be run buildless via "text/babel" script below. -->
-    <script
-      src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"
-      integrity="sha256-aS0B0wnsaDByLfE16h4MDCP1fQFccysd1YWOcV+gbBo="
-      crossorigin="anonymous"
-    ></script>
+
+    <link rel="modulepreload" href="./assets/vendor/zebar.js" />
+    <link rel="modulepreload" href="./assets/vendor/zod.js" />
+    <link rel="modulepreload" href="./assets/vendor/luxon.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-core.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-event.js" />
+    <link rel="modulepreload" href="./assets/vendor/tauri-window.js" />
+    <link rel="modulepreload" href="./assets/vendor/glazewm.js" />
   </head>
   <body>
-    <div id="root"></div>
+    <!--
+      Written out here rather than built by a framework.
+      
+      This used to be React, compiled in the page by Babel, with all three of
+      those fetched from a CDN along with the zebar client. It cost the bar its
+      two worst failures. A network that was slow or unavailable left the bar
+      completely blank, because nothing could run at all. And an await on one of
+      those imports that never settled left the rest of the script unreached, so
+      the panel guard was never started and nothing could dismiss a panel — which
+      looked, from the outside, exactly like clicks needing to be repeated.
+      
+      A dozen readings do not need a framework, and the pack already vendors what
+      it needs for the same reason: no widget should depend on a network to draw
+      itself. Tiles are hidden until their provider has something to say.
+    -->
+    <div id="root">
+      <div class="app">
+        <div class="left">
+          <i
+            class="logo nf nf-dev-windows11 clickable"
+            data-panel="windows-menu"
+            title="Menu"
+          ></i>
 
-    <script type="text/babel" data-type="module">
-      import React, {
-        useState,
-        useEffect,
-      } from 'https://esm.sh/react@18?dev';
-      import { createRoot } from 'https://esm.sh/react-dom@18/client?dev';
-      import * as zebar from 'https://esm.sh/zebar@3.3.1';
+          <div class="media clickable" data-panel="media-panel" hidden>
+            <i class="nf" data-el="media-icon"></i>
+            <span class="media-text" data-el="media-text"></span>
+          </div>
+        </div>
 
-      // Paths and titles shared by the watcher and the click handlers below.
-      const packDir = zebar
-        .currentWidget()
-        .htmlPath.replace(/[\\/][^\\/]*$/, '');
+        <div class="center" data-el="clock"></div>
+
+        <div class="right">
+          <div class="system clickable" data-panel="system-panel" title="System panel" hidden>
+            <span class="stat">
+              <i class="nf nf-oct-cpu"></i>
+              <span data-el="cpu"></span>
+            </span>
+            <span class="stat">
+              <i class="nf nf-fae-chip"></i>
+              <span data-el="memory"></span>
+            </span>
+          </div>
+
+          <div
+            class="volume clickable"
+            data-panel="controls-panel"
+            title="Volume and brightness"
+            hidden
+          >
+            <i class="nf" data-el="volume-icon"></i>
+            <span data-el="volume"></span>
+          </div>
+
+          <div class="storage clickable" data-panel="storage-panel" hidden>
+            <i class="nf nf-md-harddisk"></i>
+            <span data-el="storage"></span>
+          </div>
+
+          <div class="battery clickable" data-panel="battery-panel" title="Battery panel" hidden>
+            <i class="nf" data-el="battery-icon"></i>
+            <span data-el="battery"></span>
+            <i class="nf nf-md-power_plug charging-icon" data-el="charging" hidden></i>
+          </div>
+
+          <div class="weather clickable" data-panel="weather-panel" hidden>
+            <i class="nf" data-el="weather-icon"></i>
+            <span data-el="weather"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
+      import * as zebar from './assets/vendor/zebar.js';
+      import { startWeather, weatherIcon } from './assets/weather.js';
+
+      const widget = zebar.currentWidget();
+      const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
       const windowCtlScript = `${packDir}\\scripts\\window-ctl.ps1`;
+
+      // Every element the script writes to, looked up once.
+      const el = {};
+      for (const node of document.querySelectorAll('[data-el]')) {
+        el[node.dataset.el] = node;
+      }
+
+      const tile = {};
+      for (const node of document.querySelectorAll('[data-panel]')) {
+        tile[node.dataset.panel] = node;
+      }
+
+      function show(node, visible) {
+        node.hidden = !visible;
+      }
+
+      /* ------------------------------------------------------------------ *
+       * Readings
+       * ------------------------------------------------------------------ */
 
       const providers = zebar.createProviderGroup({
         cpu: { type: 'cpu' },
@@ -47,46 +132,178 @@
         disk: { type: 'disk', refreshInterval: 60000 },
       });
 
+      // Remembered while nothing is playing, so the tile still shows the last
+      // thing that played instead of disappearing.
+      let lastTrack = null;
+
+      function batteryIcon(percent) {
+        if (percent > 90) return 'nf-fa-battery_4';
+        if (percent > 70) return 'nf-fa-battery_3';
+        if (percent > 40) return 'nf-fa-battery_2';
+        if (percent > 20) return 'nf-fa-battery_1';
+        return 'nf-fa-battery_0';
+      }
+
+      // Mute gets the crossed out icon, otherwise the icon follows the level.
+      function volumeIcon(volume, isMuted) {
+        if (isMuted || volume === 0) return 'nf-md-volume_off';
+        if (volume < 40) return 'nf-md-volume_low';
+        if (volume < 70) return 'nf-md-volume_medium';
+        return 'nf-md-volume_high';
+      }
+
+      function systemDiskOf(disks) {
+        return (
+          disks.find(one => (one.mountPoint || '').toUpperCase().startsWith('C')) ||
+          disks.find(one => !one.isRemovable) ||
+          disks[0] ||
+          null
+        );
+      }
+
+      function render() {
+        const out = providers.outputMap;
+
+        el.clock.textContent = out.date?.formatted ?? '';
+
+        // Media: the current session, or the last one we saw.
+        const session = out.media?.currentSession || null;
+        if (session) lastTrack = session;
+        const track = session || lastTrack;
+
+        show(tile['media-panel'], Boolean(track));
+
+        if (track) {
+          tile['media-panel'].classList.toggle('stale', !session);
+          tile['media-panel'].title = session
+            ? 'Now playing'
+            : 'Last played (nothing is playing right now)';
+          el['media-icon'].className =
+            'nf ' + (track.isPlaying ? 'nf-md-pause' : 'nf-md-play');
+          el['media-text'].textContent =
+            (track.title || 'Unknown track') +
+            (track.artist ? '  ·  ' + track.artist : '');
+        }
+
+        show(tile['system-panel'], Boolean(out.cpu || out.memory));
+
+        if (out.cpu) {
+          const usage = Math.round(out.cpu.usage);
+          el.cpu.textContent = usage + '%';
+          // The colour is the only thing that says a reading is worth noticing.
+          el.cpu.className = usage > 85 ? 'high-usage' : '';
+        }
+
+        if (out.memory) {
+          el.memory.textContent = Math.round(out.memory.usage) + '%';
+        }
+
+        const playback = out.audio?.defaultPlaybackDevice || null;
+
+        show(tile['controls-panel'], Boolean(playback));
+
+        if (playback) {
+          const volume = Math.round(playback.volume);
+          el['volume-icon'].className =
+            'nf ' + volumeIcon(volume, playback.isMuted);
+          el.volume.textContent = playback.isMuted ? 'muted' : volume + '%';
+        }
+
+        const disk = systemDiskOf(out.disk?.disks || []);
+        const free = disk && disk.availableSpace;
+
+        show(tile['storage-panel'], Boolean(free));
+
+        if (free) {
+          el.storage.textContent =
+            Math.round(free.iecValue) + free.iecUnit;
+          tile['storage-panel'].title =
+            'Storage · ' + (disk.mountPoint || disk.name || '');
+        }
+
+        show(tile['battery-panel'], Boolean(out.battery));
+
+        if (out.battery) {
+          const percent = Math.round(out.battery.chargePercent);
+          el['battery-icon'].className = 'nf ' + batteryIcon(out.battery.chargePercent);
+          el.battery.textContent = percent + '%';
+          show(el.charging, out.battery.isCharging);
+        }
+      }
+
+      providers.onOutput(render);
+      render();
+
       /*
-       * Window state watcher.
-       *
+       * Weather does not come from a zebar provider: that one geolocates through
+       * ipinfo.io and when the request failed its output went null, the tile
+       * vanished and the only trace was an error. assets/weather.js remembers the
+       * coordinates, retries on a widening delay, and reports nothing when it
+       * cannot get a reading.
+       */
+      startWeather({
+        onUpdate: data => {
+          const now = data?.current || null;
+
+          show(tile['weather-panel'], Boolean(now));
+
+          if (!now) return;
+
+          el['weather-icon'].className =
+            'nf ' + weatherIcon(now.weather_code, now.is_day === 1);
+          el.weather.textContent = Math.round(now.temperature_2m) + '°C';
+          tile['weather-panel'].title =
+            'Forecast' + (data.place ? ' · ' + data.place : '');
+        },
+      });
+
+      // Wheel over the volume tile nudges it by two steps.
+      tile['controls-panel'].addEventListener('wheel', event => {
+        const playback = providers.outputMap.audio?.defaultPlaybackDevice;
+
+        if (!playback) return;
+
+        const step = event.deltaY < 0 ? 2 : -2;
+        const next = Math.max(
+          0,
+          Math.min(100, Math.round(playback.volume) + step),
+        );
+
+        providers.outputMap.audio
+          .setVolume(next, { deviceId: playback.deviceId })
+          .catch(err => console.warn('volume change failed:', err));
+      });
+
+      /* ------------------------------------------------------------------ *
+       * Bar state
+       * ------------------------------------------------------------------ */
+
+      /*
        * scripts/fg-state.ps1 prints "max" while the foreground window is
        * maximized and "float" otherwise. While a window is maximized the bar
        * fills the whole strip it is given; the rest of the time `is-floating`
        * lifts it off the screen edge (see styles.css).
        */
       async function watchForegroundState() {
-        if (!navigator.userAgent.includes('Windows')) {
-          return;
-        }
-
-        const scriptPath = `${packDir}\\scripts\\fg-state.ps1`;
-
         const watcher = await zebar.shellSpawn('powershell.exe', [
           '-NoProfile',
           '-ExecutionPolicy',
           'Bypass',
           '-File',
-          scriptPath,
+          `${packDir}\\scripts\\fg-state.ps1`,
         ]);
 
         watcher.onStdout(line => {
           const state = line.trim();
 
           if (state === 'max' || state === 'float') {
-            document.body.classList.toggle(
-              'is-floating',
-              state === 'float',
-            );
+            document.body.classList.toggle('is-floating', state === 'float');
           }
         });
 
         watcher.onStderr(line => console.warn('fg-state:', line));
 
-        watcher.onExit(status => {
-          console.warn('fg-state watcher exited:', status);
-          document.body.classList.remove('is-floating');
-        });
+        watcher.onExit(() => document.body.classList.remove('is-floating'));
 
         window.addEventListener('beforeunload', () => watcher.kill());
       }
@@ -95,21 +312,10 @@
         console.warn('fg-state watcher failed:', err),
       );
 
-      /*
-       * Click interactions.
-       *
-       * Panels are other widgets of the same pack, opened with
-       * zebar.startWidgetPreset. Dismissing them is not this page's job: one long
-       * lived helper (scripts/window-ctl.ps1 -Action guard) watches every panel
-       * window and closes it as soon as a click lands outside it, wherever that
-       * click lands, including on this bar. It detects clicks from the mouse state
-       * rather than from page events, which is what makes it reliable.
-       *
-       * The guard reports what it does on stdout ("open <name>", "closed
-       * <name>"), which is how this bar knows whether a panel is up. So the bar
-       * only ever opens panels, and the one thing it has to get right is not
-       * reopening the panel that the click it is handling has just dismissed.
-       */
+      /* ------------------------------------------------------------------ *
+       * Panels
+       * ------------------------------------------------------------------ */
+
       const PANEL_NAMES = [
         'battery-panel',
         'about-panel',
@@ -120,6 +326,7 @@
         'windows-menu',
         'weather-panel',
       ];
+
       const panels = new Map(
         PANEL_NAMES.map(name => [name, { open: false, closedAt: 0 }]),
       );
@@ -127,18 +334,72 @@
       /*
        * How long a panel counts as "just closed".
        *
-       * The guard dismisses a panel on any click outside it, which includes the
-       * click on the tile that opened it. That close is reported here, and the
-       * report can land in the gap between the mouse going down and the click
-       * handler running, on a click held for more than a moment. Without this the
-       * handler would see nothing open and reopen the panel with the same click
-       * that just dismissed it, which is what made closing take two clicks.
+       * The guard dismisses a panel on any click outside it, which includes a
+       * click on this bar. That close is reported back here, and the report can
+       * land in the gap between the mouse going down and the click handler
+       * running. Without this the handler would see nothing open and reopen the
+       * panel with the same click that just dismissed it.
        *
        * Long enough to cover a slow click, short enough that deliberately
        * reopening a panel straight after closing it still works.
        */
       const JUST_CLOSED_MS = 350;
 
+      /*
+       * Which monitor this bar is on. Decides the preset a panel opens with, and
+       * names the guard, so two bars do not retire each other's panels.
+       *
+       * Bounded, and never awaited by anything that has to happen: an await on
+       * this that never came back is what stopped the guard from starting at all.
+       */
+      const monitorInfo = (async () => {
+        const info = { preset: 'primary', owner: 'default' };
+
+        try {
+          const { currentMonitor, primaryMonitor } = await import(
+            './assets/vendor/tauri-window.js'
+          );
+
+          const [current, primary] = await Promise.race([
+            Promise.all([currentMonitor(), primaryMonitor()]),
+            new Promise((resolve, reject) =>
+              setTimeout(() => reject(new Error('timed out')), 2000),
+            ),
+          ]);
+
+          if (current) info.owner = `m${current.position.x}x${current.position.y}`;
+
+          if (
+            current &&
+            primary &&
+            (current.position.x !== primary.position.x ||
+              current.position.y !== primary.position.y)
+          ) {
+            info.preset = 'secondary';
+          }
+        } catch (err) {
+          console.warn('Monitor lookup failed, using the primary preset.', err);
+        }
+
+        return info;
+      })();
+
+      let panelPreset = 'primary';
+      monitorInfo.then(info => {
+        panelPreset = info.preset;
+      });
+
+      /*
+       * One long lived helper watches every panel window and closes it as soon as
+       * a click lands outside it, wherever that click lands, this bar included. It
+       * reads the mouse state rather than page events, which is what makes it
+       * reliable, and it reports what it does on stdout:
+       *
+       *   open <name> | closed <name> | gone <name>
+       *
+       * So the bar only ever opens panels. Its one job on the closing side is not
+       * to reopen the panel that the click it is handling has just dismissed.
+       */
       let panelGuard = null;
       let guardStarting = null;
 
@@ -146,7 +407,7 @@
         if (guardStarting) return guardStarting;
 
         guardStarting = (async () => {
-          const monitor = await monitorInfo;
+          const { owner } = await monitorInfo;
 
           const guard = await zebar.shellSpawn('powershell.exe', [
             '-NoProfile',
@@ -157,7 +418,7 @@
             '-Match',
             PANEL_NAMES.join(','),
             '-Owner',
-            monitor.owner,
+            owner,
           ]);
 
           guard.onStdout(line => {
@@ -176,13 +437,16 @@
 
           guard.onStderr(line => console.warn('panel guard:', line));
 
-          guard.onExit(status => {
-            console.warn('panel guard exited:', status);
+          guard.onExit(() => {
             panelGuard = null;
             guardStarting = null;
             panels.forEach(state => {
               state.open = false;
             });
+
+            // The guard is the only thing that dismisses a panel, so it does not
+            // get to stay dead. It also exits on a lifetime cap by design.
+            setTimeout(startPanelGuard, 1000);
           });
 
           window.addEventListener('beforeunload', () => guard.kill());
@@ -191,26 +455,22 @@
         })().catch(err => {
           console.warn('Panel guard failed to start:', err);
           guardStarting = null;
+          setTimeout(startPanelGuard, 5000);
         });
 
         return guardStarting;
       }
 
       /*
-       * One-off closer for a single panel, used as a backstop when the tile of an
-       * open panel is clicked. The guard normally gets there first.
-       *
-       * Never called with more than one name: a broad close takes a couple of
-       * hundred milliseconds to start, by which time the panel the user actually
-       * asked for is open and matches it too.
+       * Closing a single panel, for when the tile of an open panel is clicked. The
+       * guard normally gets there first on the same click; this is the backstop.
        *
        * Not the guard's stdin, which would be cheaper and does not work: zebar's
        * shellWrite resolves without delivering, so the write looks fine from here
-       * and the guard never sees a line. Its trace file has no record of a single
-       * command, which is what gave that away.
+       * and the guard never sees a line.
        */
-      async function closeWidget(name) {
-        await zebar
+      function closeWidget(name) {
+        zebar
           .shellExec('powershell.exe', [
             '-NoProfile',
             '-File',
@@ -224,63 +484,17 @@
       }
 
       /*
-       * Placement and the guard's owner both come from the monitor this bar sits
-       * on, resolved once at load: a click never waits on a monitor lookup, and
-       * each display gets its own guard instead of the two bars retiring each
-       * other's.
-       */
-      const monitorInfo = (async () => {
-        const info = { preset: 'primary', owner: 'default' };
-
-        try {
-          const { currentMonitor, primaryMonitor } = await import(
-            'https://esm.sh/@tauri-apps/api@2.0.2/window'
-          );
-          const [current, primary] = await Promise.all([
-            currentMonitor(),
-            primaryMonitor(),
-          ]);
-
-          if (current) {
-            info.owner = `m${current.position.x}x${current.position.y}`;
-          }
-
-          if (
-            current &&
-            primary &&
-            (current.position.x !== primary.position.x ||
-              current.position.y !== primary.position.y)
-          ) {
-            info.preset = 'secondary';
-          }
-        } catch (err) {
-          console.warn('Monitor lookup failed, using the primary preset.', err);
-        }
-
-        return info;
-      })();
-
-      let panelPreset = 'primary';
-
-      monitorInfo.then(info => {
-        panelPreset = info.preset;
-      });
-
-      /*
-       * One panel at a time. Clicking a tile opens it; clicking the tile of the
-       * panel already open closes it. Switching from one panel to another does not
-       * close anything from here, because the guard is already closing the old one
-       * for two reasons at once: the click was outside it, and it retires the
+       * One panel at a time. Clicking a tile opens its panel; clicking the tile of
+       * the panel already open closes it. Switching from one panel to another does
+       * not close anything from here, because the guard is already closing the old
+       * one for two reasons at once: the click was outside it, and it retires the
        * previous panel whenever a new one appears.
        */
-      async function toggleWidget(name) {
+      async function togglePanel(name) {
         const state = panels.get(name);
         const justClosed = Date.now() - state.closedAt < JUST_CLOSED_MS;
 
         if (state.open || justClosed) {
-          // This click was a dismissal. The guard has already closed the panel,
-          // or is a few milliseconds from doing so; asking again is only for the
-          // case where the guard is not running.
           if (state.open) {
             state.open = false;
             state.closedAt = Date.now();
@@ -290,249 +504,23 @@
           return;
         }
 
-        /*
-         * Switching panels does not close the old one from here. The guard closes
-         * it, both because the click was outside it and because it retires the
-         * previous panel when a new one appears.
-         *
-         * The bar used to send a close for every panel name at this point, which
-         * arrived a few hundred milliseconds later — after the new panel had
-         * opened, and matching its name too. It closed the panel it had just
-         * asked for.
-         */
         state.open = true;
-        startPanelGuard();
 
-        await zebar.startWidgetPreset(name, panelPreset, {
-          packId: zebar.currentWidget().packId,
-        });
+        await zebar
+          .startWidgetPreset(name, panelPreset, { packId: widget.packId })
+          .catch(err => {
+            state.open = false;
+            console.warn('Could not open panel:', err);
+          });
       }
 
-      // Start the guard now instead of on the first click, so even the first
-      // panel is watched from the moment it appears.
+      for (const [name, node] of Object.entries(tile)) {
+        node.addEventListener('click', () => togglePanel(name));
+      }
+
+      // Started now rather than on the first click, so the first panel is watched
+      // from the moment it appears.
       startPanelGuard();
-
-      createRoot(document.getElementById('root')).render(<App />);
-
-      function App() {
-        const [output, setOutput] = useState(providers.outputMap);
-        // Remembered while nothing is playing, so the tile still shows the last
-        // thing that played instead of disappearing.
-        const [lastTrack, setLastTrack] = useState(null);
-        const [weather, setWeather] = useState(null);
-        const [weatherIcon, setWeatherIcon] = useState(null);
-
-        useEffect(() => {
-          providers.onOutput(() => setOutput(providers.outputMap));
-        }, []);
-
-        /*
-         * Weather does not come from a zebar provider. The provider geolocates
-         * through ipinfo.io and when that request failed the output went null,
-         * the tile vanished and the only trace was an error. assets/weather.js
-         * remembers the coordinates, retries on a widening delay and reports
-         * nothing when it cannot get a reading, so a bad network shows an empty
-         * space rather than a complaint.
-         *
-         * Imported by URL rather than by a bare relative path: this script is
-         * compiled in the page by Babel, and a relative specifier does not
-         * resolve against the document from inside the module it produces.
-         */
-        useEffect(() => {
-          let stop = null;
-          let cancelled = false;
-
-          import(new URL('assets/weather.js', document.baseURI).href)
-            .then(module => {
-              if (cancelled) return;
-
-              setWeatherIcon(() => module.weatherIcon);
-              stop = module.startWeather({ onUpdate: setWeather });
-            })
-            .catch(err => console.warn('weather unavailable:', err));
-
-          return () => {
-            cancelled = true;
-            if (stop) stop();
-          };
-        }, []);
-
-        const currentSession = output.media?.currentSession || null;
-
-        useEffect(() => {
-          if (currentSession) setLastTrack(currentSession);
-        }, [currentSession]);
-
-        const track = currentSession || lastTrack;
-        const playback = output.audio?.defaultPlaybackDevice || null;
-        const disks = output.disk?.disks || [];
-        const systemDisk =
-          disks.find(one => (one.mountPoint || '').toUpperCase().startsWith('C')) ||
-          disks.find(one => !one.isRemovable) ||
-          disks[0] ||
-          null;
-
-        // Mute gets the crossed out icon, otherwise the icon follows the level.
-        function volumeIcon(volume, isMuted) {
-          if (isMuted || volume === 0) return 'nf-md-volume_off';
-          if (volume < 40) return 'nf-md-volume_low';
-          if (volume < 70) return 'nf-md-volume_medium';
-          return 'nf-md-volume_high';
-        }
-
-        // Wheel over the volume tile nudges it by two steps.
-        function nudgeVolume(event) {
-          if (!playback) return;
-
-          const step = event.deltaY < 0 ? 2 : -2;
-          const next = Math.max(0, Math.min(100, Math.round(playback.volume) + step));
-
-          output.audio
-            .setVolume(next, { deviceId: playback.deviceId })
-            .catch(err => console.warn('volume change failed:', err));
-        }
-
-        // Get icon to show for how much of the battery is charged.
-        function getBatteryIcon(batteryOutput) {
-          if (batteryOutput.chargePercent > 90)
-            return <i className="nf nf-fa-battery_4"></i>;
-          if (batteryOutput.chargePercent > 70)
-            return <i className="nf nf-fa-battery_3"></i>;
-          if (batteryOutput.chargePercent > 40)
-            return <i className="nf nf-fa-battery_2"></i>;
-          if (batteryOutput.chargePercent > 20)
-            return <i className="nf nf-fa-battery_1"></i>;
-          return <i className="nf nf-fa-battery_0"></i>;
-        }
-
-        const nowWeather = weather?.current || null;
-
-        return (
-          <div className="app">
-            <div className="left">
-              <i
-                className="logo nf nf-dev-windows11 clickable"
-                onClick={() => toggleWidget('windows-menu')}
-                title="Menu"
-              ></i>
-
-              {track && (
-                <div
-                  className={'media clickable' + (currentSession ? '' : ' stale')}
-                  onClick={() => toggleWidget('media-panel')}
-                  title={
-                    currentSession
-                      ? 'Now playing'
-                      : 'Last played (nothing is playing right now)'
-                  }
-                >
-                  <i
-                    className={
-                      'nf ' + (track.isPlaying ? 'nf-md-pause' : 'nf-md-play')
-                    }
-                  ></i>
-                  <span className="media-text">
-                    {track.title || 'Unknown track'}
-                    {track.artist ? '  ·  ' + track.artist : ''}
-                  </span>
-                </div>
-              )}
-
-            </div>
-
-            <div className="center">{output.date?.formatted}</div>
-
-            <div className="right">
-              {(output.cpu || output.memory) && (
-                <div
-                  className="system clickable"
-                  onClick={() => toggleWidget('system-panel')}
-                  title="System panel"
-                >
-                  {output.cpu && (
-                    <span className="stat">
-                      <i className="nf nf-oct-cpu"></i>
-
-                      {/* Change the text color if the CPU usage is high. */}
-                      <span
-                        className={output.cpu.usage > 85 ? 'high-usage' : ''}
-                      >
-                        {Math.round(output.cpu.usage)}%
-                      </span>
-                    </span>
-                  )}
-
-                  {output.memory && (
-                    <span className="stat">
-                      <i className="nf nf-fae-chip"></i>
-                      {Math.round(output.memory.usage)}%
-                    </span>
-                  )}
-                </div>
-              )}
-              {playback && (
-                <div
-                  className="volume clickable"
-                  onClick={() => toggleWidget('controls-panel')}
-                  onWheel={nudgeVolume}
-                  title="Volume and brightness"
-                >
-                  <i className={'nf ' + volumeIcon(playback.volume, playback.isMuted)}></i>
-                  {playback.isMuted ? 'muted' : Math.round(playback.volume) + '%'}
-                </div>
-              )}
-
-              {systemDisk && systemDisk.availableSpace && (
-                <div
-                  className="storage clickable"
-                  onClick={() => toggleWidget('storage-panel')}
-                  title={'Storage · ' + (systemDisk.mountPoint || systemDisk.name || '')}
-                >
-                  <i className="nf nf-md-harddisk"></i>
-                  {Math.round(systemDisk.availableSpace.iecValue)}
-                  {systemDisk.availableSpace.iecUnit}
-                </div>
-              )}
-
-              {output.battery && (
-                <div
-                  className="battery clickable"
-                  onClick={() => toggleWidget('battery-panel')}
-                  title="Battery panel"
-                >
-                  {getBatteryIcon(output.battery)}
-                  {Math.round(output.battery.chargePercent)}%
-                  {/* Charging bolt, after the value. */}
-                  {output.battery.isCharging && (
-                    <i className="nf nf-md-power_plug charging-icon"></i>
-                  )}
-                </div>
-              )}
-
-              {/* No reading means no tile: never an error where a temperature
-                  should be. */}
-              {nowWeather && weatherIcon && (
-                <div
-                  className="weather clickable"
-                  onClick={() => toggleWidget('weather-panel')}
-                  title={'Forecast' + (weather.place ? ' · ' + weather.place : '')}
-                >
-                  <i
-                    className={
-                      'nf ' +
-                      weatherIcon(
-                        nowWeather.weather_code,
-                        nowWeather.is_day === 1,
-                      )
-                    }
-                  ></i>
-                  {Math.round(nowWeather.temperature_2m)}°C
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      }
     </script>
   </body>
 </html>

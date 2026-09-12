@@ -61,6 +61,12 @@ p {
   user-select: none;
 }
 
+/* Tiles are hidden until their provider has a reading. Needs the override:
+   .media, .volume and the rest set display: flex, which would otherwise win. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
