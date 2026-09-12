@@ -99,16 +99,16 @@
        * Click interactions.
        *
        * Panels are other widgets of the same pack, opened with
-       * zebar.startWidgetPreset. Their lifetime is handled by one long lived
-       * helper (scripts/window-ctl.ps1 -Action guard): it watches every panel
-       * window and closes one as soon as it is dismissed, by a click outside it
-       * or by losing the foreground. One guard for all panels, started once,
-       * is what keeps opening and closing snappy: starting a PowerShell per
-       * click costs the better part of a second.
+       * zebar.startWidgetPreset. Dismissing them is not this page's job: one long
+       * lived helper (scripts/window-ctl.ps1 -Action guard) watches every panel
+       * window and closes it as soon as a click lands outside it, wherever that
+       * click lands, including on this bar. It detects clicks from the mouse state
+       * rather than from page events, which is what makes it reliable.
        *
        * The guard reports what it does on stdout ("open <name>", "closed
-       * <name>"), which is how this bar knows whether a panel is up. Clicking
-       * an item again just sends one line to a process that is already running.
+       * <name>"), which is how this bar knows whether a panel is up. So the bar
+       * only ever opens panels, and the one thing it has to get right is not
+       * reopening the panel that the click it is handling has just dismissed.
        */
       const PANEL_NAMES = [
         'battery-panel',
@@ -267,14 +267,11 @@
       });
 
       /*
-       * One panel at a time. Clicking a tile closes whatever is open and then
-       * opens the one asked for; clicking the tile of the panel that is already
-       * open just closes it.
-       *
-       * The close is not awaited. Writing a line to the guard is what starts it,
-       * and the guard fades the old window out on its own thread, so the new
-       * panel is asked for in the same tick as the click instead of waiting on an
-       * animation somewhere else.
+       * One panel at a time. Clicking a tile opens it; clicking the tile of the
+       * panel already open closes it. Switching from one panel to another does not
+       * close anything from here, because the guard is already closing the old one
+       * for two reasons at once: the click was outside it, and it retires the
+       * previous panel whenever a new one appears.
        */
       async function toggleWidget(name) {
         const state = panels.get(name);

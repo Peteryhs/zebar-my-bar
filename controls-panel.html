@@ -197,20 +197,18 @@
       });
 
       /*
-       * Brightness goes through one long lived PowerShell (brightness.ps1
-       * -Action serve) instead of a process per step. Starting a process and
-       * resolving the WMI classes cost a few hundred milliseconds each time,
-       * which is what made the brightness slider lag behind the pointer while
-       * the volume slider kept up. Here a step is a line on a pipe.
+       * Brightness runs a process per change, coalesced: one call in flight, and
+       * the newest level wins when several arrive while it runs. A drag therefore
+       * lands a few changes a second rather than one per pixel, and the readout is
+       * drawn from the slider position so it keeps up regardless.
+       *
+       * There was a long lived helper here that took levels on stdin, which cost
+       * nothing per step. It never worked: zebar's shellWrite resolves without
+       * delivering, so the page wrote levels into a pipe nobody read and the
+       * brightness never moved at all.
        */
-      let brightnessServer = null;
       let draggingBrightness = false;
       let brightnessSupported = true;
-      // The server is only used once it has answered a ping. Writing to a
-      // spawned process's stdin either works or silently does nothing, and there
-      // is no way to tell from here which one happened, so the panel proves the
-      // pipe before it depends on it and runs one process per change until then.
-      let serverAnswered = false;
 
       function markUnsupported() {
         brightnessSupported = false;
@@ -229,70 +227,19 @@
         if (!draggingBrightness) el.brightnessSlider.value = String(level);
       }
 
-      async function startBrightnessServer() {
-        const server = await zebar.shellSpawn('powershell.exe', [
-          '-NoProfile',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          brightnessScript,
-          '-Action',
-          'serve',
-        ]);
+      let brightnessInFlight = false;
+      let pendingBrightness = null;
 
-        server.onStdout(line => {
-          const text = line.trim();
-
-          if (text === 'pong') {
-            serverAnswered = true;
-            return;
-          }
-
-          if (text === 'unsupported') {
-            markUnsupported();
-            return;
-          }
-
-          // "set failed" and anything else non-numeric is ignored on purpose:
-          // the slider is where the user is looking and it already shows the
-          // value they asked for.
-          const level = Number(text);
-          if (Number.isFinite(level) && level >= 0) showBrightness(level);
-        });
-
-        server.onStderr(line => console.warn('brightness:', line));
-
-        server.onExit(() => {
-          brightnessServer = null;
-          serverAnswered = false;
-        });
-
-        brightnessServer = server;
-
-        try {
-          await server.write('ping\n');
-        } catch (error) {
-          console.warn('brightness server write failed:', error);
-        }
-      }
-
-      /*
-       * Fallback for when the server could not be started: one process per
-       * change, coalesced so a drag cannot queue up a backlog.
-       */
-      let fallbackInFlight = false;
-      let pendingFallback = null;
-
-      async function pushBrightnessFallback(level) {
-        if (fallbackInFlight) {
-          pendingFallback = level;
+      async function pushBrightness(level) {
+        if (brightnessInFlight) {
+          pendingBrightness = level;
           return;
         }
 
-        fallbackInFlight = true;
+        brightnessInFlight = true;
 
         try {
-          await zebar.shellExec('powershell.exe', [
+          const result = await zebar.shellExec('powershell.exe', [
             '-NoProfile',
             '-ExecutionPolicy',
             'Bypass',
@@ -303,16 +250,18 @@
             '-Value',
             String(level),
           ]);
+
+          if ((result.stdout || '').trim() === 'unsupported') markUnsupported();
         } catch (error) {
-          console.warn('brightness fallback failed:', error);
+          console.warn('brightness change failed:', error);
         } finally {
-          fallbackInFlight = false;
+          brightnessInFlight = false;
         }
 
-        if (pendingFallback !== null) {
-          const next = pendingFallback;
-          pendingFallback = null;
-          pushBrightnessFallback(next);
+        if (pendingBrightness !== null) {
+          const next = pendingBrightness;
+          pendingBrightness = null;
+          pushBrightness(next);
         }
       }
 
@@ -327,15 +276,7 @@
         el.brightnessIcon.className =
           'nf ' + (level > 60 ? 'nf-md-brightness_7' : 'nf-md-brightness_5');
 
-        if (brightnessServer && serverAnswered) {
-          Promise.resolve(brightnessServer.write(level + '\n')).catch(() => {
-            // The pipe died under us. Everything from here goes the slow way.
-            serverAnswered = false;
-            pushBrightnessFallback(level);
-          });
-        } else {
-          pushBrightnessFallback(level);
-        }
+        pushBrightness(level);
       });
 
       el.brightnessSlider.addEventListener('change', () => {
@@ -373,20 +314,6 @@
       }
 
       readBrightnessOnce();
-
-      startBrightnessServer().catch(error => {
-        console.warn('brightness server failed to start:', error);
-        el.brightnessNote.textContent = '';
-      });
-
-      /*
-       * Shell first, close after: closing the widget destroys this page and its
-       * JS context, so the server has to be told to go before that happens. It
-       * also idles out on its own if this never runs.
-       */
-      window.addEventListener('beforeunload', () => {
-        if (brightnessServer) brightnessServer.kill();
-      });
 
       /* Closing is done from outside, by the helper the bar starts when it opens
          this panel (see window-ctl.ps1). Escape here is a bonus. */
