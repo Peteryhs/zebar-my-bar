@@ -107,6 +107,7 @@
       const widget = zebar.currentWidget();
       const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
       const windowCtlScript = `${packDir}\\scripts\\window-ctl.ps1`;
+      const brightnessScript = `${packDir}\\scripts\\brightness.ps1`;
 
       // Every element the script writes to, looked up once.
       const el = {};
@@ -208,7 +209,7 @@
         show(tile['controls-panel'], Boolean(playback));
 
         if (playback) {
-          if (!isDraggingVolume) {
+          if (!isDraggingControl) {
             const volume = Math.round(playback.volume);
             el['volume-icon'].className =
               'nf ' + volumeIcon(volume, playback.isMuted);
@@ -265,19 +266,31 @@
       });
 
       /* ------------------------------------------------------------------ *
-       * Volume quick controls (wheel nudge & drag-to-adjust)
+       * Quick controls (volume & brightness drag/wheel)
        * ------------------------------------------------------------------ */
 
-      let isDraggingVolume = false;
-      let volumeDragStartX = 0;
-      let volumeDragStartVol = 0;
-      let activeVolumePointerId = null;
+      let isDraggingControl = false;
+      let controlDragStartX = 0;
+      let controlDragStartVal = 0;
+      let controlDragMode = 'volume'; // 'volume' | 'brightness'
+      let activeControlPointerId = null;
       let suppressControlsClick = false;
 
       let volumeInFlight = false;
       let pendingVolume = null;
 
+      let currentBrightness = 70;
+      let brightnessInFlight = false;
+      let pendingBrightness = null;
+      let wheelResetTimer = null;
+
       const PX_PER_PERCENT = 1.5;
+
+      function brightnessIcon(level) {
+        if (level > 66) return 'nf-md-brightness_7';
+        if (level > 33) return 'nf-md-brightness_6';
+        return 'nf-md-brightness_5';
+      }
 
       async function pushVolume(volume) {
         const playback = providers.outputMap.audio?.defaultPlaybackDevice;
@@ -312,10 +325,92 @@
         }
       }
 
-      // Wheel over the volume tile nudges it by two steps.
-      tile['controls-panel'].addEventListener('wheel', event => {
-        const playback = providers.outputMap.audio?.defaultPlaybackDevice;
+      async function pushBrightness(level) {
+        currentBrightness = level;
 
+        if (brightnessInFlight) {
+          pendingBrightness = level;
+          return;
+        }
+
+        brightnessInFlight = true;
+
+        try {
+          const result = await zebar.shellExec('powershell.exe', [
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            brightnessScript,
+            '-Action',
+            'set',
+            '-Value',
+            String(level),
+          ]);
+          const val = Number((result.stdout || '').trim());
+          if (Number.isFinite(val) && val >= 0) {
+            currentBrightness = val;
+          }
+        } catch (error) {
+          console.warn('Brightness change failed:', error);
+        } finally {
+          brightnessInFlight = false;
+        }
+
+        if (pendingBrightness !== null) {
+          const next = pendingBrightness;
+          pendingBrightness = null;
+          pushBrightness(next);
+        }
+      }
+
+      async function readBrightnessOnce() {
+        try {
+          const result = await zebar.shellExec('powershell.exe', [
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            brightnessScript,
+            '-Action',
+            'get',
+          ]);
+          const val = Number((result.stdout || '').trim());
+          if (Number.isFinite(val) && val >= 0) {
+            currentBrightness = val;
+          }
+        } catch (err) {
+          console.warn('brightness read failed:', err);
+        }
+      }
+
+      readBrightnessOnce();
+
+      // Wheel over the volume tile nudges volume (or brightness if Shift held).
+      tile['controls-panel'].addEventListener('wheel', event => {
+        if (event.shiftKey) {
+          event.preventDefault();
+          const step = event.deltaY < 0 ? 5 : -5;
+          const next = Math.max(0, Math.min(100, currentBrightness + step));
+          currentBrightness = next;
+
+          el['volume-icon'].className = 'nf ' + brightnessIcon(next);
+          el.volume.textContent = next + '%';
+          volumeTile.classList.add('is-adjusting');
+          volumeTile.style.setProperty('--vol-percent', next + '%');
+
+          pushBrightness(next);
+
+          clearTimeout(wheelResetTimer);
+          wheelResetTimer = setTimeout(() => {
+            volumeTile.classList.remove('is-adjusting');
+            volumeTile.style.removeProperty('--vol-percent');
+            render();
+          }, 700);
+          return;
+        }
+
+        const playback = providers.outputMap.audio?.defaultPlaybackDevice;
         if (!playback) return;
 
         const step = event.deltaY < 0 ? 2 : -2;
@@ -327,19 +422,26 @@
         pushVolume(next);
       });
 
-      // Click & hold, then drag left/right to scrub volume up/down.
+      // Click & hold, then drag left/right to scrub volume (or brightness if Shift held).
       const volumeTile = tile['controls-panel'];
 
       if (volumeTile) {
         volumeTile.addEventListener('pointerdown', event => {
           if (event.button !== 0) return;
           const playback = providers.outputMap.audio?.defaultPlaybackDevice;
-          if (!playback) return;
+          if (!playback && !event.shiftKey) return;
 
-          activeVolumePointerId = event.pointerId;
-          volumeDragStartX = event.clientX;
-          volumeDragStartVol = Math.round(playback.volume);
-          isDraggingVolume = false;
+          activeControlPointerId = event.pointerId;
+          controlDragStartX = event.clientX;
+          controlDragMode = event.shiftKey ? 'brightness' : 'volume';
+
+          if (controlDragMode === 'brightness') {
+            controlDragStartVal = currentBrightness;
+          } else {
+            controlDragStartVal = playback ? Math.round(playback.volume) : 50;
+          }
+
+          isDraggingControl = false;
 
           try {
             volumeTile.setPointerCapture(event.pointerId);
@@ -348,41 +450,47 @@
 
         volumeTile.addEventListener('pointermove', event => {
           if (
-            activeVolumePointerId === null ||
-            event.pointerId !== activeVolumePointerId
+            activeControlPointerId === null ||
+            event.pointerId !== activeControlPointerId
           ) {
             return;
           }
 
-          const dx = event.clientX - volumeDragStartX;
+          const dx = event.clientX - controlDragStartX;
 
-          if (!isDraggingVolume) {
+          if (!isDraggingControl) {
             if (Math.abs(dx) >= 3) {
-              isDraggingVolume = true;
+              isDraggingControl = true;
               volumeTile.classList.add('is-adjusting');
               document.body.classList.add('is-dragging-volume');
             }
           }
 
-          if (isDraggingVolume) {
-            const targetVolume = Math.max(
+          if (isDraggingControl) {
+            const targetVal = Math.max(
               0,
-              Math.min(100, Math.round(volumeDragStartVol + dx / PX_PER_PERCENT)),
+              Math.min(100, Math.round(controlDragStartVal + dx / PX_PER_PERCENT)),
             );
 
-            el.volume.textContent = targetVolume + '%';
-            el['volume-icon'].className =
-              'nf ' + volumeIcon(targetVolume, targetVolume === 0);
-            volumeTile.style.setProperty('--vol-percent', targetVolume + '%');
-
-            pushVolume(targetVolume);
+            if (controlDragMode === 'brightness') {
+              el.volume.textContent = targetVal + '%';
+              el['volume-icon'].className = 'nf ' + brightnessIcon(targetVal);
+              volumeTile.style.setProperty('--vol-percent', targetVal + '%');
+              pushBrightness(targetVal);
+            } else {
+              el.volume.textContent = targetVal + '%';
+              el['volume-icon'].className =
+                'nf ' + volumeIcon(targetVal, targetVal === 0);
+              volumeTile.style.setProperty('--vol-percent', targetVal + '%');
+              pushVolume(targetVal);
+            }
           }
         });
 
-        function endVolumeDrag(event) {
+        function endControlDrag(event) {
           if (
-            activeVolumePointerId === null ||
-            event.pointerId !== activeVolumePointerId
+            activeControlPointerId === null ||
+            event.pointerId !== activeControlPointerId
           ) {
             return;
           }
@@ -396,10 +504,11 @@
             } catch (err) {}
           }
 
-          activeVolumePointerId = null;
+          activeControlPointerId = null;
 
-          if (isDraggingVolume) {
-            isDraggingVolume = false;
+          if (isDraggingControl) {
+            const wasBrightness = controlDragMode === 'brightness';
+            isDraggingControl = false;
             volumeTile.classList.remove('is-adjusting');
             volumeTile.style.removeProperty('--vol-percent');
             document.body.classList.remove('is-dragging-volume');
@@ -409,12 +518,19 @@
             setTimeout(() => {
               suppressControlsClick = false;
             }, 150);
+
+            if (wasBrightness) {
+              // Smoothly restore volume reading after adjusting brightness
+              setTimeout(() => {
+                if (!isDraggingControl) render();
+              }, 400);
+            }
           }
         }
 
-        volumeTile.addEventListener('pointerup', endVolumeDrag);
-        volumeTile.addEventListener('pointercancel', endVolumeDrag);
-        volumeTile.addEventListener('lostpointercapture', endVolumeDrag);
+        volumeTile.addEventListener('pointerup', endControlDrag);
+        volumeTile.addEventListener('pointercancel', endControlDrag);
+        volumeTile.addEventListener('lostpointercapture', endControlDrag);
       }
 
       /* ------------------------------------------------------------------ *
