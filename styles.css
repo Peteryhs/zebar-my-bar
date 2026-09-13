@@ -425,6 +425,26 @@ body.is-floating #root {
   opacity: 0.75;
 }
 
+/* Sunrise, sunset and the length of the day, between the reading and the forecast. */
+.weather-sun {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-sun i {
+  margin-right: 4px;
+  font-size: 12px;
+}
+
+.weather-daylength {
+  margin-left: auto;
+  opacity: 0.85;
+}
+
 .forecast {
   display: flex;
   flex-direction: column;
@@ -1006,13 +1026,22 @@ body.is-floating #root {
 /*
  * The whole day at a fixed scale, so it scrolls.
  *
- * min-height is what makes the panel as tall as it is: the day column is the taller
- * of the two, so this is the dial for how much of the day is on screen at once.
+ * An outright height, not `flex: 1` with a minimum. A flex item in a column whose
+ * own height is decided by its contents has no free space to grow into, and the
+ * scroll container then reports the height of what is inside it: a full day at 34px
+ * an hour is over 800px, and the panel was sized to all of it. An explicit height
+ * is a definite height, which is what a scroll container needs to be able to clip.
+ *
+ * So this number is how much of the day is on screen at once, and it sets the height
+ * of the panel, since the day column is the taller of the two.
  */
 .cal-timeline {
   position: relative;
-  flex: 1;
-  min-height: 244px;
+  flex: 0 0 auto;
+  height: 250px;
+  /* Room for the midnight label, which sits above the line it belongs to and was
+     otherwise clipped by the top of the scrolling area. */
+  padding-top: 6px;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;

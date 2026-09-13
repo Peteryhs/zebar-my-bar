@@ -613,6 +613,21 @@
         if (one) showDetail(one);
       });
 
+      /*
+       * A click anywhere else puts the details away.
+       *
+       * This runs last, on the way up from wherever the click landed, so the two
+       * exceptions have to be named: inside the card itself, and on another event,
+       * which the handler above is in the middle of opening.
+       */
+      document.addEventListener('click', event => {
+        if (!detailOpen()) return;
+        if (event.target.closest('.cal-detail')) return;
+        if (event.target.closest('[data-event]')) return;
+
+        hideDetail();
+      });
+
       el.days.addEventListener('click', event => {
         const button = event.target.closest('.cal-day');
 

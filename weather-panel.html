@@ -47,6 +47,8 @@
         </div>
       </div>
 
+      <div class="weather-sun" id="sun" hidden></div>
+
       <div class="panel-separator"></div>
 
       <div class="forecast" id="forecast"></div>
@@ -71,6 +73,7 @@
         nowHumidity: document.getElementById('now-humidity'),
         place: document.getElementById('place'),
         forecast: document.getElementById('forecast'),
+        sun: document.getElementById('sun'),
       };
 
       /*
@@ -82,6 +85,13 @@
        * its placeholders.
        */
       let latest = null;
+
+      function timeText(date) {
+        return date.toLocaleTimeString(undefined, {
+          hour: 'numeric',
+          minute: '2-digit',
+        });
+      }
 
       function dayLabel(isoDate) {
         const date = new Date(isoDate + 'T12:00:00');
@@ -112,6 +122,30 @@
         }
 
         if (!daily) return;
+
+        /*
+         * Today's sun times, from the same daily block as the forecast rows. Day
+         * length is worked out here rather than shown as two bare times, because the
+         * length is the part you notice changing through the year.
+         */
+        const sunrise = daily.sunrise?.[0];
+        const sunset = daily.sunset?.[0];
+
+        if (sunrise && sunset) {
+          const up = new Date(sunrise);
+          const down = new Date(sunset);
+          const minutes = Math.round((down - up) / 60000);
+
+          el.sun.hidden = false;
+          el.sun.innerHTML =
+            '<span><i class="nf nf-weather-sunrise"></i>' + timeText(up) + '</span>' +
+            '<span><i class="nf nf-weather-sunset"></i>' + timeText(down) + '</span>' +
+            '<span class="weather-daylength">' +
+            Math.floor(minutes / 60) + ' h ' + String(minutes % 60).padStart(2, '0') +
+            ' of daylight</span>';
+        } else {
+          el.sun.hidden = true;
+        }
 
         el.forecast.innerHTML = daily.time
           .map((date, index) => {

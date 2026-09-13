@@ -603,7 +603,7 @@
           "offsetX": "0px",
           "offsetY": "48px",
           "width": "640px",
-          "height": "540px",
+          "height": "380px",
           "monitorSelection": {
             "type": "primary"
           },
@@ -619,7 +619,7 @@
           "offsetX": "0px",
           "offsetY": "48px",
           "width": "640px",
-          "height": "540px",
+          "height": "380px",
           "monitorSelection": {
             "type": "secondary"
           },
