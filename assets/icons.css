@@ -26,6 +26,8 @@
 .nf-md-chevron_right:before{content:"\f0142"}
 .nf-md-chip:before{content:"\f061a"}
 .nf-md-circle_small:before{content:"\f09df"}
+.nf-md-clock_outline:before{content:"\f0150"}
+.nf-md-close:before{content:"\f0156"}
 .nf-md-cog:before{content:"\f0493"}
 .nf-md-counter:before{content:"\f0199"}
 .nf-md-cpu_64_bit:before{content:"\f0ee0"}
@@ -37,6 +39,7 @@
 .nf-md-lightning_bolt:before{content:"\f140b"}
 .nf-md-lock:before{content:"\f033e"}
 .nf-md-logout:before{content:"\f0343"}
+.nf-md-map_marker:before{content:"\f034e"}
 .nf-md-memory:before{content:"\f035b"}
 .nf-md-microsoft_windows:before{content:"\f05b3"}
 .nf-md-monitor:before{content:"\f0379"}
@@ -50,6 +53,7 @@
 .nf-md-skip_next:before{content:"\f04ad"}
 .nf-md-skip_previous:before{content:"\f04ae"}
 .nf-md-swap_horizontal:before{content:"\f04e1"}
+.nf-md-text:before{content:"\f09a8"}
 .nf-md-timer_outline:before{content:"\f051b"}
 .nf-md-tune_variant:before{content:"\f1542"}
 .nf-md-usb_flash_drive:before{content:"\f129e"}
@@ -58,6 +62,7 @@
 .nf-md-volume_medium:before{content:"\f0580"}
 .nf-md-volume_mute:before{content:"\f075f"}
 .nf-md-volume_off:before{content:"\f0581"}
+.nf-md-water_percent:before{content:"\f058e"}
 .nf-md-wifi:before{content:"\f05a9"}
 .nf-oct-cpu:before{content:"\f4bc"}
 .nf-weather-cloudy:before{content:"\e312"}
@@ -73,4 +78,6 @@
 .nf-weather-sleet:before{content:"\e3ad"}
 .nf-weather-snow:before{content:"\e31a"}
 .nf-weather-sprinkle:before{content:"\e31b"}
+.nf-weather-sunrise:before{content:"\e34c"}
+.nf-weather-sunset:before{content:"\e34d"}
 .nf-weather-thunderstorm:before{content:"\e31d"}

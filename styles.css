@@ -812,6 +812,131 @@ body.is-floating #root {
   gap: 2px;
 }
 
+/*
+ * The weather for whichever day is selected, in the space under the month grid.
+ *
+ * Pushed to the bottom, so it sits against the foot of the panel rather than
+ * floating in the middle of whatever the month leaves over.
+ */
+.cal-weather {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cal-weather-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-weather-icon {
+  font-size: 19px;
+  margin-right: 0;
+  opacity: 0.9;
+}
+
+.cal-weather-temps {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.cal-weather-high {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cal-weather-low {
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+.cal-weather-rain {
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.cal-weather-rain i {
+  margin-right: 2px;
+  font-size: 11px;
+}
+
+.cal-weather-sun {
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-weather-sun i {
+  margin-right: 3px;
+  font-size: 11px;
+}
+
+/*
+ * One event in full, over the panel. Anchored to the bottom because that is where
+ * the space is: the month ends above it and the day column is scrolled, so nothing
+ * useful is being covered.
+ */
+.cal-detail {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgb(18 14 34 / 99%);
+  border: 1px solid rgb(255 255 255 / 14%);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+
+.cal-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.cal-detail-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cal-detail-row {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  align-items: flex-start;
+}
+
+.cal-detail-row i {
+  margin-right: 0;
+  width: 13px;
+  flex: 0 0 13px;
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+/* Descriptions run to any length, so this one is bounded and scrolls. */
+.cal-detail-description {
+  max-height: 84px;
+  overflow-y: auto;
+  opacity: 0.8;
+  line-height: 1.4;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 20%) transparent;
+}
+
 /* The day gets the rest, which is most of it: blocks along a line need width in a
    way a month grid does not. */
 .cal-day-view {
@@ -878,13 +1003,41 @@ body.is-floating #root {
  * height, rather than the day being laid out at a fixed scale and the panel growing
  * to fit. The panel's height is set by the month grid beside it.
  */
+/*
+ * The whole day at a fixed scale, so it scrolls.
+ *
+ * min-height is what makes the panel as tall as it is: the day column is the taller
+ * of the two, so this is the dial for how much of the day is on screen at once.
+ */
 .cal-timeline {
   position: relative;
   flex: 1;
-  /* What makes the panel as tall as it is: the day column is the taller of the two,
-     so this is the dial for how much room the chart gets. */
   min-height: 244px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 20%) transparent;
+}
+
+.cal-timeline::-webkit-scrollbar {
+  width: 5px;
+}
+
+.cal-timeline::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 18%);
+  border-radius: 3px;
+}
+
+/* Clickable, since clicking one opens its details. */
+.cal-block,
+.cal-allday-item {
+  cursor: pointer;
+}
+
+.cal-block:hover,
+.cal-allday-item:hover {
+  outline: 1px solid rgb(255 255 255 / 25%);
+  outline-offset: -1px;
 }
 
 .cal-track {

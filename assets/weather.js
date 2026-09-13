@@ -154,7 +154,7 @@ export async function fetchWeather(coords) {
     '&longitude=' +
     coords.longitude +
     '&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,is_day,weather_code' +
-    '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+    '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset' +
     '&timezone=auto&forecast_days=7';
 
   return withRetry(() => fetchJson(url), 'forecast');

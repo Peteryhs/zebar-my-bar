@@ -577,7 +577,16 @@
       ],
       "caching": {
         "defaultDuration": 604800,
-        "rules": []
+        "rules": [
+          {
+            "urlRegex": "api\\.open-meteo\\.com",
+            "duration": 900
+          },
+          {
+            "urlRegex": "ipinfo\\.io",
+            "duration": 86400
+          }
+        ]
       },
       "privileges": {
         "shellCommands": [

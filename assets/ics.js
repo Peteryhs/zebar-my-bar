@@ -22,6 +22,19 @@ function unescapeText(value) {
 }
 
 /*
+ * As above, but keeping the line breaks. A summary is one line by definition and
+ * flattening it is right; a description is often an agenda or a dial-in block, and
+ * flattening that turns it into a wall.
+ */
+function unescapeMultiline(value) {
+  return value
+    .replace(/\\n/gi, '\n')
+    .replace(/\\,/g, ',')
+    .replace(/\\;/g, ';')
+    .replace(/\\\\/g, '\\');
+}
+
+/*
  * A property line is NAME;PARAM=VALUE:value. Times come in three shapes:
  * 20260912 (a date, so all day), 20260912T130000Z (UTC) and 20260912T130000
  * (whatever the TZID says, treated as local).
@@ -111,6 +124,8 @@ function expand(event, from, to) {
         out.push({
           summary: event.summary,
           location: event.location,
+          description: event.description,
+          url: event.url,
           allDay: event.allDay,
           start,
           end,
@@ -245,6 +260,12 @@ export function parseIcs(text, from, to) {
         break;
       case 'LOCATION':
         current.location = unescapeText(parsed.value);
+        break;
+      case 'DESCRIPTION':
+        current.description = unescapeMultiline(parsed.value);
+        break;
+      case 'URL':
+        current.url = parsed.value;
         break;
       case 'DTSTART': {
         const when = parseWhen(parsed.value, parsed.params);

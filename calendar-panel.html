@@ -32,12 +32,13 @@
         </button>
       </div>
 
-      <!-- Month on the left, the selected day on the right, which is where the
-           room is: a day's events read better along a line than down a list. -->
+      <!-- Month on the left with the weather for whichever day is selected beneath
+           it, the day itself on the right. -->
       <div class="cal-body">
         <div class="cal-month">
           <div class="cal-grid" id="weekdays"></div>
           <div class="cal-grid" id="days"></div>
+          <div class="cal-weather" id="weather"></div>
         </div>
 
         <div class="cal-day-view">
@@ -47,12 +48,16 @@
           <div class="cal-timeline" id="timeline"></div>
         </div>
       </div>
+
+      <!-- Details for one event, over the panel, when one is clicked. -->
+      <div class="cal-detail" id="detail" hidden></div>
     </div>
 
     <script type="module">
       import * as zebar from './assets/vendor/zebar.js';
       import { fitWindowToCard } from './assets/panel.js';
       import { parseIcs } from './assets/ics.js';
+      import { resolveCoords, fetchWeather, weatherIcon } from './assets/weather.js';
 
       const widget = zebar.currentWidget();
 
@@ -64,20 +69,41 @@
       // Warn about an event this long before it starts.
       const WARN_MINUTES = 15;
 
+      /*
+       * The axis covers the whole day at a fixed scale and scrolls, rather than the
+       * day's events being squeezed into the height available. Both have been tried:
+       * fitting the events in means hours outside them cannot be reached at all, and
+       * a day is more than its meetings. So the scale is fixed, an hour is legible,
+       * and the view opens on the part worth looking at.
+       */
+      const HOUR_HEIGHT = 34;
+      const MIN_BLOCK_PX = 11;
+      // Below this a block cannot carry both its time and its title, so it carries
+      // the title.
+      const SHORT_BLOCK_PX = 26;
+      const COLUMN_GAP_PC = 2;
+      const MIN_HOUR_GAP_PX = 15;
+
       const el = {
         title: document.getElementById('month-title'),
         weekdays: document.getElementById('weekdays'),
         days: document.getElementById('days'),
+        weather: document.getElementById('weather'),
         dayTitle: document.getElementById('day-title'),
         allday: document.getElementById('allday'),
         timeline: document.getElementById('timeline'),
         upnext: document.getElementById('upnext'),
+        detail: document.getElementById('detail'),
       };
 
       const today = startOfDay(new Date());
       let shownMonth = new Date(today.getFullYear(), today.getMonth(), 1);
       let selected = new Date(today);
       let events = [];
+      // The events drawn for the selected day, so a click can find its way back from
+      // a block to the event it stands for.
+      let drawn = [];
+      let forecast = null;
 
       function startOfDay(date) {
         return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -106,6 +132,17 @@
           hour: 'numeric',
           minute: '2-digit',
         });
+      }
+
+      function durationText(from, to) {
+        const minutes = Math.round((to - from) / 60000);
+
+        if (minutes < 60) return minutes + ' min';
+
+        const hours = Math.floor(minutes / 60);
+        const rest = minutes % 60;
+
+        return hours + ' h' + (rest ? ' ' + String(rest).padStart(2, '0') : '');
       }
 
       function escapeHtml(text) {
@@ -218,20 +255,6 @@
         el.days.innerHTML = cells.join('');
       }
 
-      // The day is scaled into the height available rather than laid out at a fixed
-      // scale, so it is always all on screen with nothing to scroll to. An hour is
-      // therefore worth more pixels on a quiet day than on a long one, but within
-      // any one day distance still means duration, which is what the shape of the
-      // day is read from.
-      const MIN_TRACK_PX = 244;
-      const MIN_BLOCK_PX = 10;
-      // Below this a block cannot carry both its time and its title, so it carries
-      // the title.
-      const SHORT_BLOCK_PX = 26;
-      const COLUMN_GAP_PC = 2;
-      // An hour line needs this much room before the next one, or the labels collide.
-      const MIN_HOUR_GAP_PX = 15;
-
       /*
        * Groups of events that overlap, directly or through a chain of others, and
        * the columns within each group.
@@ -262,7 +285,7 @@
               columnEnds[column] = event.end;
             }
 
-            placed.push({ event, column, columns: 0, groupIndex: placed.length });
+            placed.push({ event, column, columns: 0 });
           }
 
           // Every event in the group is divided by the same number of columns, so
@@ -290,13 +313,15 @@
       }
 
       // Clamped to the day being shown, so something running past midnight does not
-      // drag the axis with it.
+      // reach beyond the axis.
       function clampToDay(event, dayStart, dayEnd) {
         return {
           start: event.start < dayStart ? dayStart : event.start,
           end: event.end > dayEnd ? dayEnd : event.end,
         };
       }
+
+      let scrolledForDay = null;
 
       function renderDay() {
         const now = new Date();
@@ -315,70 +340,43 @@
         const allDay = forDay.filter(event => event.allDay);
 
         el.allday.innerHTML = allDay
-          .map(
-            event =>
-              '<div class="cal-allday-item is-' + stateOf(event, now) + '" title="' +
-              escapeHtml(event.summary) + '">' + escapeHtml(event.summary) + '</div>',
-          )
+          .map((event, index) => {
+            // Indexed from the end of the timed list, so one click handler can serve
+            // both the all day row and the timeline.
+            const at = forDay.filter(one => !one.allDay).length + index;
+
+            return (
+              '<div class="cal-allday-item is-' + stateOf(event, now) +
+              '" data-event="' + at + '" title="' + escapeHtml(event.summary) + '">' +
+              escapeHtml(event.summary) + '</div>'
+            );
+          })
           .join('');
 
         const timed = forDay
           .filter(event => !event.allDay)
           .sort((a, b) => a.start - b.start);
 
-        if (timed.length === 0) {
-          el.timeline.innerHTML = allDay.length
-            ? ''
-            : '<div class="cal-blocks-empty">Nothing scheduled</div>';
-          return;
-        }
+        drawn = timed.concat(allDay);
 
         const dayStart = startOfDay(selected);
         const dayEnd = new Date(dayStart.getTime() + 24 * 3600 * 1000);
+        const trackHeight = 24 * HOUR_HEIGHT;
+        const yOf = when =>
+          Math.round(((when - dayStart) / (dayEnd - dayStart)) * trackHeight);
 
-        // The axis covers the day's events, and the current time when that is today,
-        // so the marker is always somewhere on it. Whole hours, for labels that read.
-        let from = new Date(Math.min(...timed.map(event => event.start)));
-        let to = new Date(Math.max(...timed.map(event => event.end)));
-
-        if (isToday) {
-          if (now < from) from = now;
-          if (now > to) to = now;
-        }
-
-        from = new Date(from.getFullYear(), from.getMonth(), from.getDate(), from.getHours());
-        to = new Date(Math.ceil(to.getTime() / 3600000) * 3600000);
-
-        // Never shorter than three hours: a single half hour meeting on an axis of
-        // its own tells you nothing about the shape of the day.
-        if ((to - from) < 3 * 3600000) to = new Date(from.getTime() + 3 * 3600000);
-
-        const spanMs = to - from;
-
-        /*
-         * The room this has to work with. Measured from the element, which the
-         * layout has already stretched to fill what the month grid beside it leaves
-         * over — so the day fits the panel rather than the panel growing to fit the
-         * day.
-         */
-        const trackHeight = Math.max(MIN_TRACK_PX, el.timeline.clientHeight || 0);
-        const yOf = when => Math.round(((when - from) / spanMs) * trackHeight);
-
-        const hourHeight = trackHeight / (spanMs / 3600000);
-        // Every hour if they fit, otherwise every second or third, so the labels stay
-        // legible on a long day instead of piling into each other.
-        const hourStep = Math.max(1, Math.ceil(MIN_HOUR_GAP_PX / hourHeight));
-
+        const hourStep = Math.max(1, Math.ceil(MIN_HOUR_GAP_PX / HOUR_HEIGHT));
         const hours = [];
-        let index = 0;
 
-        for (let at = new Date(from); at <= to; at = new Date(at.getTime() + 3600000)) {
-          if (index++ % hourStep !== 0) continue;
+        for (let hour = 0; hour <= 24; hour += hourStep) {
+          const at = new Date(dayStart.getTime() + hour * 3600000);
 
           hours.push(
             '<div class="cal-hour" style="top: ' + yOf(at) + 'px">' +
               '<span class="cal-hour-label">' +
-              at.toLocaleTimeString(undefined, { hour: 'numeric' }) +
+              (hour === 24
+                ? ''
+                : at.toLocaleTimeString(undefined, { hour: 'numeric' })) +
               '</span></div>',
           );
         }
@@ -394,17 +392,17 @@
             (height < SHORT_BLOCK_PX ? ' is-short' : '');
 
           return (
-            '<div class="' + classes + '" style="top: ' + top + 'px; height: ' + height +
-            'px; left: ' + (column * width) + '%; width: calc(' + width + '% - ' +
-            COLUMN_GAP_PC + 'px)" title="' +
-            escapeHtml(when + '  ·  ' + event.summary) + '">' +
+            '<div class="' + classes + '" data-event="' + timed.indexOf(event) +
+            '" style="top: ' + top + 'px; height: ' + height + 'px; left: ' +
+            (column * width) + '%; width: calc(' + width + '% - ' + COLUMN_GAP_PC +
+            'px)" title="' + escapeHtml(when + '  ·  ' + event.summary) + '">' +
             '<span class="cal-block-time">' + escapeHtml(when) + '</span>' +
             '<span class="cal-block-title">' + escapeHtml(event.summary) + '</span>' +
             '</div>'
           );
         });
 
-        const marker = isToday && now >= from && now <= to
+        const marker = isToday
           ? '<div class="cal-now" style="top: ' + yOf(now) + 'px">' +
             '<span class="cal-now-label">' + timeText(now) + '</span></div>'
           : '';
@@ -415,14 +413,96 @@
           '<div class="cal-lanes">' + blocks.join('') + '</div>' +
           marker +
           '</div>';
+
+        /*
+         * Opened on the part worth looking at, once per day shown rather than on
+         * every redraw: the half minute tick would otherwise keep pulling the view
+         * back while it was being read.
+         */
+        const key = dayKey(selected);
+
+        if (scrolledForDay !== key) {
+          scrolledForDay = key;
+
+          const focus = isToday
+            ? yOf(now)
+            : timed.length
+              ? yOf(timed[0].start)
+              : 8 * HOUR_HEIGHT;
+
+          el.timeline.scrollTop = Math.max(0, focus - 60);
+        }
       }
+
+      /*
+       * The weather for whichever day is selected, under the month.
+       *
+       * Only as far ahead as the forecast goes, which is a week; past that the space
+       * is left empty rather than filled with a guess. Same Open-Meteo response the
+       * bar's tile uses, and the same cached coordinates, so this costs one request.
+       */
+      function renderWeather() {
+        const daily = forecast?.daily;
+
+        if (!daily) {
+          el.weather.innerHTML = '';
+          return;
+        }
+
+        const index = daily.time.indexOf(dayKey(selected));
+
+        if (index < 0) {
+          el.weather.innerHTML = '';
+          return;
+        }
+
+        const high = Math.round(daily.temperature_2m_max[index]);
+        const low = Math.round(daily.temperature_2m_min[index]);
+        const rain = daily.precipitation_probability_max?.[index];
+        const sunrise = daily.sunrise?.[index];
+        const sunset = daily.sunset?.[index];
+
+        const parts = [
+          '<i class="nf ' + weatherIcon(daily.weather_code[index], true) + ' cal-weather-icon"></i>',
+          '<span class="cal-weather-temps">' +
+            '<span class="cal-weather-high">' + high + '°</span>' +
+            '<span class="cal-weather-low">' + low + '°</span>' +
+            '</span>',
+        ];
+
+        if (rain !== null && rain !== undefined) {
+          parts.push(
+            '<span class="cal-weather-rain"><i class="nf nf-md-water_percent"></i>' +
+              rain + '%</span>',
+          );
+        }
+
+        const sun = [];
+
+        if (sunrise) {
+          sun.push(
+            '<span><i class="nf nf-weather-sunrise"></i>' +
+              timeText(new Date(sunrise)) + '</span>',
+          );
+        }
+
+        if (sunset) {
+          sun.push(
+            '<span><i class="nf nf-weather-sunset"></i>' +
+              timeText(new Date(sunset)) + '</span>',
+          );
+        }
+
+        el.weather.innerHTML =
+          '<div class="cal-weather-row">' + parts.join('') + '</div>' +
+          (sun.length ? '<div class="cal-weather-sun">' + sun.join('') + '</div>' : '');
+      }
+
       /*
        * The next event about to start, if it is close enough to be worth saying so.
        *
        * Always about today, whichever day is selected: it is a warning, not part of
-       * what you are browsing. It only shows while this panel is open, which is the
-       * honest limit of a popup — see the note in the pack notes about wanting this
-       * in the bar itself.
+       * what you are browsing.
        */
       function renderUpNext() {
         const now = new Date();
@@ -449,21 +529,96 @@
       }
 
       /*
-       * Order matters here. The day is scaled to the height it is given, so anything
-       * above it has to be in place first: draw the warning afterwards and the day
-       * would have been measured against room the warning was about to take, and its
-       * last half hour would fall off the bottom.
+       * One event in full, over the panel.
+       *
+       * A block on the timeline is as wide as the column allows and as tall as the
+       * event is long, which for a fifteen minute slot is room for a truncated title
+       * and nothing else. This is where the rest of it lives.
        */
+      function showDetail(event) {
+        const when = event.allDay
+          ? 'All day'
+          : timeText(event.start) + ' – ' + timeText(event.end) +
+            '  ·  ' + durationText(event.start, event.end);
+
+        const rows = [
+          '<div class="cal-detail-row"><i class="nf nf-md-clock_outline"></i>' +
+            '<span>' + escapeHtml(when) + '</span></div>',
+          '<div class="cal-detail-row"><i class="nf nf-md-calendar_month"></i><span>' +
+            escapeHtml(
+              event.start.toLocaleDateString(undefined, {
+                weekday: 'long',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+              }),
+            ) + '</span></div>',
+        ];
+
+        if (event.location) {
+          rows.push(
+            '<div class="cal-detail-row"><i class="nf nf-md-map_marker"></i><span>' +
+              escapeHtml(event.location) + '</span></div>',
+          );
+        }
+
+        if (event.description) {
+          rows.push(
+            '<div class="cal-detail-row"><i class="nf nf-md-text"></i>' +
+              '<span class="cal-detail-description">' +
+              escapeHtml(event.description).replace(/\n/g, '<br />') +
+              '</span></div>',
+          );
+        }
+
+        el.detail.hidden = false;
+        el.detail.innerHTML =
+          '<div class="cal-detail-head">' +
+          '<span class="cal-detail-title">' + escapeHtml(event.summary) + '</span>' +
+          '<button class="panel-close" id="detail-close" title="Close">' +
+          '<i class="nf nf-md-close"></i></button>' +
+          '</div>' +
+          rows.join('');
+
+        document
+          .getElementById('detail-close')
+          .addEventListener('click', hideDetail);
+      }
+
+      function hideDetail() {
+        el.detail.hidden = true;
+        el.detail.innerHTML = '';
+      }
+
+      function detailOpen() {
+        return !el.detail.hidden;
+      }
+
       function render() {
         renderMonth();
+        renderWeather();
         renderUpNext();
         renderDay();
       }
+
+      // One handler for the timeline and the all day row, since both carry the index
+      // of the event they stand for.
+      document.querySelector('.cal-day-view').addEventListener('click', event => {
+        const target = event.target.closest('[data-event]');
+
+        if (!target) return;
+
+        const one = drawn[Number(target.dataset.event)];
+
+        if (one) showDetail(one);
+      });
 
       el.days.addEventListener('click', event => {
         const button = event.target.closest('.cal-day');
 
         if (!button) return;
+
+        hideDetail();
 
         const [year, month, day] = button.dataset.date.split('-').map(Number);
         selected = new Date(year, month - 1, day);
@@ -478,18 +633,21 @@
       });
 
       document.getElementById('previous').addEventListener('click', () => {
+        hideDetail();
         shownMonth = new Date(shownMonth.getFullYear(), shownMonth.getMonth() - 1, 1);
         render();
         loadEvents();
       });
 
       document.getElementById('next').addEventListener('click', () => {
+        hideDetail();
         shownMonth = new Date(shownMonth.getFullYear(), shownMonth.getMonth() + 1, 1);
         render();
         loadEvents();
       });
 
       document.getElementById('today').addEventListener('click', () => {
+        hideDetail();
         shownMonth = new Date(today.getFullYear(), today.getMonth(), 1);
         selected = new Date(today);
         render();
@@ -499,7 +657,7 @@
       /*
        * Events come from scripts/calendar.ps1, which fetches the iCal feeds listed
        * in ~/.glzr/calendar-feeds.txt. With no feeds configured the script prints
-       * nothing and this is a plain month view.
+       * nothing and this is a month view with the weather under it.
        */
       let icsText = null;
 
@@ -538,9 +696,24 @@
         render();
       }
 
+      async function loadWeather() {
+        try {
+          const coords = await resolveCoords();
+
+          if (!coords) return;
+
+          forecast = await fetchWeather(coords);
+          renderWeather();
+        } catch (error) {
+          // The calendar is the point of this panel; weather is decoration.
+          console.warn('forecast unavailable:', error);
+        }
+      }
+
       renderWeekdays();
       render();
       loadEvents();
+      loadWeather();
 
       /*
        * Redrawn every half minute: what counts as past, happening and still to come
@@ -554,7 +727,8 @@
       window.addEventListener('beforeunload', () => clearInterval(ticking));
 
       /* Closing is done from outside, by the helper the bar starts when it opens
-         this panel (see window-ctl.ps1). Escape here is a bonus. */
+         this panel (see window-ctl.ps1). Escape here is a bonus, and closes the
+         details first when they are open, which is what Escape usually means. */
       function close() {
         const panel = document.querySelector('.panel');
 
@@ -568,7 +742,14 @@
       }
 
       window.addEventListener('keydown', event => {
-        if (event.key === 'Escape') close();
+        if (event.key !== 'Escape') return;
+
+        if (detailOpen()) {
+          hideDetail();
+          return;
+        }
+
+        close();
       });
     </script>
   </body>
