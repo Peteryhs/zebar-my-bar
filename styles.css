@@ -175,6 +175,39 @@ body.is-floating #root {
   gap: var(--tile-gap);
 }
 
+.app-name {
+  padding: 4px 6px;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.app-name:not([hidden]) ~ .media {
+  margin-left: 10px;
+}
+
+.media {
+  display: flex;
+  align-items: center;
+  max-width: 360px;
+}
+
+.media i,
+.media [data-el="media-icon"] {
+  font-size: 12.5px;
+  margin-right: 5px;
+  opacity: 0.85;
+}
+
+.media.stale {
+  opacity: 0.6;
+}
+
+.media-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workspaces {
   display: flex;
   align-items: center;
