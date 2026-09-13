@@ -250,6 +250,33 @@ body.is-floating #root {
 }
 
 /*
+ * Volume tile interactive styling and quick drag-scrubbing
+ */
+.volume {
+  position: relative;
+  touch-action: none;
+  user-select: none;
+}
+
+body.is-dragging-volume,
+body.is-dragging-volume * {
+  cursor: ew-resize !important;
+  user-select: none !important;
+}
+
+.volume.is-adjusting {
+  background: linear-gradient(
+    90deg,
+    rgb(255 255 255 / 24%) 0%,
+    rgb(255 255 255 / 24%) var(--vol-percent, 0%),
+    rgb(255 255 255 / 8%) var(--vol-percent, 0%),
+    rgb(255 255 255 / 8%) 100%
+  ) !important;
+  box-shadow: 0 0 10px rgb(255 255 255 / 15%);
+  cursor: ew-resize !important;
+}
+
+/*
  * Popup panel (see battery-panel.html). Share the bar's palette, but as a
  * free-floating card instead of a strip.
  */

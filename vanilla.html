@@ -208,10 +208,12 @@
         show(tile['controls-panel'], Boolean(playback));
 
         if (playback) {
-          const volume = Math.round(playback.volume);
-          el['volume-icon'].className =
-            'nf ' + volumeIcon(volume, playback.isMuted);
-          el.volume.textContent = playback.isMuted ? 'muted' : volume + '%';
+          if (!isDraggingVolume) {
+            const volume = Math.round(playback.volume);
+            el['volume-icon'].className =
+              'nf ' + volumeIcon(volume, playback.isMuted);
+            el.volume.textContent = playback.isMuted ? 'muted' : volume + '%';
+          }
         }
 
         const disk = systemDiskOf(out.disk?.disks || []);
@@ -262,6 +264,54 @@
         },
       });
 
+      /* ------------------------------------------------------------------ *
+       * Volume quick controls (wheel nudge & drag-to-adjust)
+       * ------------------------------------------------------------------ */
+
+      let isDraggingVolume = false;
+      let volumeDragStartX = 0;
+      let volumeDragStartVol = 0;
+      let activeVolumePointerId = null;
+      let suppressControlsClick = false;
+
+      let volumeInFlight = false;
+      let pendingVolume = null;
+
+      const PX_PER_PERCENT = 1.5;
+
+      async function pushVolume(volume) {
+        const playback = providers.outputMap.audio?.defaultPlaybackDevice;
+        if (!playback) return;
+
+        if (volumeInFlight) {
+          pendingVolume = volume;
+          return;
+        }
+
+        volumeInFlight = true;
+
+        try {
+          if (playback.isMuted && volume > 0) {
+            await providers.outputMap.audio.setMute(false, {
+              deviceId: playback.deviceId,
+            });
+          }
+          await providers.outputMap.audio.setVolume(volume, {
+            deviceId: playback.deviceId,
+          });
+        } catch (error) {
+          console.warn('Volume set failed:', error);
+        } finally {
+          volumeInFlight = false;
+        }
+
+        if (pendingVolume !== null) {
+          const next = pendingVolume;
+          pendingVolume = null;
+          pushVolume(next);
+        }
+      }
+
       // Wheel over the volume tile nudges it by two steps.
       tile['controls-panel'].addEventListener('wheel', event => {
         const playback = providers.outputMap.audio?.defaultPlaybackDevice;
@@ -274,10 +324,98 @@
           Math.min(100, Math.round(playback.volume) + step),
         );
 
-        providers.outputMap.audio
-          .setVolume(next, { deviceId: playback.deviceId })
-          .catch(err => console.warn('volume change failed:', err));
+        pushVolume(next);
       });
+
+      // Click & hold, then drag left/right to scrub volume up/down.
+      const volumeTile = tile['controls-panel'];
+
+      if (volumeTile) {
+        volumeTile.addEventListener('pointerdown', event => {
+          if (event.button !== 0) return;
+          const playback = providers.outputMap.audio?.defaultPlaybackDevice;
+          if (!playback) return;
+
+          activeVolumePointerId = event.pointerId;
+          volumeDragStartX = event.clientX;
+          volumeDragStartVol = Math.round(playback.volume);
+          isDraggingVolume = false;
+
+          try {
+            volumeTile.setPointerCapture(event.pointerId);
+          } catch (err) {}
+        });
+
+        volumeTile.addEventListener('pointermove', event => {
+          if (
+            activeVolumePointerId === null ||
+            event.pointerId !== activeVolumePointerId
+          ) {
+            return;
+          }
+
+          const dx = event.clientX - volumeDragStartX;
+
+          if (!isDraggingVolume) {
+            if (Math.abs(dx) >= 3) {
+              isDraggingVolume = true;
+              volumeTile.classList.add('is-adjusting');
+              document.body.classList.add('is-dragging-volume');
+            }
+          }
+
+          if (isDraggingVolume) {
+            const targetVolume = Math.max(
+              0,
+              Math.min(100, Math.round(volumeDragStartVol + dx / PX_PER_PERCENT)),
+            );
+
+            el.volume.textContent = targetVolume + '%';
+            el['volume-icon'].className =
+              'nf ' + volumeIcon(targetVolume, targetVolume === 0);
+            volumeTile.style.setProperty('--vol-percent', targetVolume + '%');
+
+            pushVolume(targetVolume);
+          }
+        });
+
+        function endVolumeDrag(event) {
+          if (
+            activeVolumePointerId === null ||
+            event.pointerId !== activeVolumePointerId
+          ) {
+            return;
+          }
+
+          if (
+            volumeTile.hasPointerCapture &&
+            volumeTile.hasPointerCapture(event.pointerId)
+          ) {
+            try {
+              volumeTile.releasePointerCapture(event.pointerId);
+            } catch (err) {}
+          }
+
+          activeVolumePointerId = null;
+
+          if (isDraggingVolume) {
+            isDraggingVolume = false;
+            volumeTile.classList.remove('is-adjusting');
+            volumeTile.style.removeProperty('--vol-percent');
+            document.body.classList.remove('is-dragging-volume');
+
+            // Suppress the click event that triggers right after pointer release
+            suppressControlsClick = true;
+            setTimeout(() => {
+              suppressControlsClick = false;
+            }, 150);
+          }
+        }
+
+        volumeTile.addEventListener('pointerup', endVolumeDrag);
+        volumeTile.addEventListener('pointercancel', endVolumeDrag);
+        volumeTile.addEventListener('lostpointercapture', endVolumeDrag);
+      }
 
       /* ------------------------------------------------------------------ *
        * Bar state
@@ -527,7 +665,10 @@
       }
 
       for (const [name, node] of Object.entries(tile)) {
-        node.addEventListener('click', () => togglePanel(name));
+        node.addEventListener('click', () => {
+          if (name === 'controls-panel' && suppressControlsClick) return;
+          togglePanel(name);
+        });
       }
 
       // Started now rather than on the first click, so the first panel is watched
