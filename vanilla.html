@@ -60,6 +60,16 @@
         <div class="center clickable" data-panel="calendar-panel" data-el="clock" title="Calendar"></div>
 
         <div class="right">
+          <div
+            class="volume clickable"
+            data-panel="controls-panel"
+            title="Volume and brightness"
+            hidden
+          >
+            <i class="nf" data-el="volume-icon"></i>
+            <span data-el="volume"></span>
+          </div>
+
           <div class="system clickable" data-panel="system-panel" title="System panel" hidden>
             <span class="stat">
               <i class="nf nf-oct-cpu"></i>
@@ -69,16 +79,6 @@
               <i class="nf nf-fae-chip"></i>
               <span data-el="memory"></span>
             </span>
-          </div>
-
-          <div
-            class="volume clickable"
-            data-panel="controls-panel"
-            title="Volume and brightness"
-            hidden
-          >
-            <i class="nf" data-el="volume-icon"></i>
-            <span data-el="volume"></span>
           </div>
 
           <div class="storage clickable" data-panel="storage-panel" hidden>
