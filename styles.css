@@ -848,6 +848,18 @@ body.is-floating #root {
  * afternoon, and the gaps between blocks are the free time.
  */
 /*
+ * Nearly opaque, unlike the other panels.
+ *
+ * The rest of the pack reads at a glance: a number, a bar, a line of text, all of
+ * which survive whatever is behind them. This one is dense — small blocks, thin
+ * rules, an hour gutter — and at the usual 88% the desktop behind it competed with
+ * every one of them. Legibility wins over the effect here.
+ */
+.panel.calendar-panel {
+  background: linear-gradient(rgb(8 6 18 / 98%), rgb(12 8 28 / 99%));
+}
+
+/*
  * The day as a timeline, running down.
  *
  * Down rather than across, because down is where a narrow column has room. An hour
@@ -869,7 +881,9 @@ body.is-floating #root {
 .cal-timeline {
   position: relative;
   flex: 1;
-  min-height: 176px;
+  /* What makes the panel as tall as it is: the day column is the taller of the two,
+     so this is the dial for how much room the chart gets. */
+  min-height: 244px;
   overflow: hidden;
 }
 
