@@ -236,6 +236,14 @@
           el['battery-icon'].className = 'nf ' + batteryIcon(out.battery.chargePercent);
           el.battery.textContent = percent + '%';
           show(el.charging, out.battery.isCharging);
+
+          if (out.battery.powerConsumption !== null && out.battery.powerConsumption !== undefined) {
+            const watts = Math.abs(out.battery.powerConsumption);
+            const sign = out.battery.isCharging ? '+' : '-';
+            tile['battery-panel'].title = `Battery · ${percent}% (${sign}${watts.toFixed(1)} W)`;
+          } else {
+            tile['battery-panel'].title = 'Battery panel';
+          }
         }
       }
 

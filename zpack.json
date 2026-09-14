@@ -592,7 +592,7 @@
         "shellCommands": [
           {
             "program": "powershell.exe",
-            "argsRegex": "-NoProfile -ExecutionPolicy Bypass -File .*\\\\calendar\\.ps1$"
+            "argsRegex": "-NoProfile -ExecutionPolicy Bypass -File .*\\\\calendar\\.ps1( -Force)?$"
           }
         ]
       },

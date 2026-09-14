@@ -102,7 +102,9 @@
         return Math.round(value) + ' GB';
       }
 
-      function humanDuration(seconds) {
+      function humanDuration(ms) {
+        if (!ms) return null;
+        const seconds = Math.floor(ms / 1000);
         const minutes = Math.floor(seconds / 60);
         const hours = Math.floor(minutes / 60);
         const days = Math.floor(hours / 24);

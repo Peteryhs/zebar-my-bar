@@ -22,7 +22,9 @@
 
 param(
   # Responses are cached, so opening the panel repeatedly does not refetch.
-  [int]$CacheMinutes = 10
+  [int]$CacheMinutes = 15,
+  # Bypass the cache and force a fresh download.
+  [switch]$Force
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -43,11 +45,13 @@ $urls = @(
 
 if ($urls.Count -eq 0) { exit 0 }
 
-# Fresh enough cache wins.
-if (Test-Path $cacheFile) {
-  $age = (Get-Date) - (Get-Item $cacheFile).LastWriteTime
+# Fresh enough cache wins unless forced or the feeds file was edited since.
+if ((-not $Force) -and (Test-Path $cacheFile)) {
+  $cacheItem = Get-Item $cacheFile
+  $feedItem = Get-Item $feedFile
+  $cacheAge = (Get-Date) - $cacheItem.LastWriteTime
 
-  if ($age.TotalMinutes -lt $CacheMinutes) {
+  if (($cacheAge.TotalMinutes -lt $CacheMinutes) -and ($feedItem.LastWriteTime -le $cacheItem.LastWriteTime)) {
     Get-Content $cacheFile -Raw
     exit 0
   }

@@ -121,6 +121,23 @@
         el.headerIcon.className =
           'nf ' + (charging ? 'nf-md-battery_charging' : 'nf-md-battery');
 
+        let powerValue = null;
+        let powerLabel = 'Power';
+
+        if (output.powerConsumption !== null && output.powerConsumption !== undefined) {
+          const watts = Math.abs(output.powerConsumption);
+          if (watts < 0.05) {
+            powerValue = '0.0 W';
+            powerLabel = 'Power';
+          } else if (charging) {
+            powerValue = '+' + watts.toFixed(1) + ' W';
+            powerLabel = 'Charge rate';
+          } else {
+            powerValue = '-' + watts.toFixed(1) + ' W';
+            powerLabel = 'Power draw';
+          }
+        }
+
         el.rows.innerHTML = [
           row(
             'nf-md-timer_outline',
@@ -135,13 +152,7 @@
               : null,
           ),
           row('nf-md-counter', 'Cycles', output.cycleCount),
-          row(
-            'nf-md-flash_outline',
-            'Draw',
-            output.powerConsumption !== null
-              ? output.powerConsumption.toFixed(1) + ' W'
-              : null,
-          ),
+          row('nf-md-flash_outline', powerLabel, powerValue),
           row(
             'nf-md-lightning_bolt',
             'Voltage',

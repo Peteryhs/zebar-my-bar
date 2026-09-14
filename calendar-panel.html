@@ -21,6 +21,9 @@
       <div class="panel-header">
         <i class="nf nf-md-calendar_month"></i>
         <span class="panel-title" id="month-title">Calendar</span>
+        <button class="panel-close" id="refresh" title="Refresh schedule (R)">
+          <i class="nf nf-md-restart"></i>
+        </button>
         <button class="panel-close" id="previous" title="Previous month">
           <i class="nf nf-md-chevron_left"></i>
         </button>
@@ -641,7 +644,7 @@
         // Clicking a day in the greyed edge of the grid moves the month with it.
         if (selected.getMonth() !== shownMonth.getMonth()) {
           shownMonth = new Date(selected.getFullYear(), selected.getMonth(), 1);
-          loadEvents();
+          parseEventsForCurrentView();
         }
 
         render();
@@ -650,51 +653,73 @@
       document.getElementById('previous').addEventListener('click', () => {
         hideDetail();
         shownMonth = new Date(shownMonth.getFullYear(), shownMonth.getMonth() - 1, 1);
+        parseEventsForCurrentView();
         render();
-        loadEvents();
       });
 
       document.getElementById('next').addEventListener('click', () => {
         hideDetail();
         shownMonth = new Date(shownMonth.getFullYear(), shownMonth.getMonth() + 1, 1);
+        parseEventsForCurrentView();
         render();
-        loadEvents();
       });
 
       document.getElementById('today').addEventListener('click', () => {
         hideDetail();
         shownMonth = new Date(today.getFullYear(), today.getMonth(), 1);
         selected = new Date(today);
+        parseEventsForCurrentView();
         render();
-        loadEvents();
       });
 
-      /*
-       * Events come from scripts/calendar.ps1, which fetches the iCal feeds listed
-       * in ~/.glzr/calendar-feeds.txt. With no feeds configured the script prints
-       * nothing and this is a month view with the weather under it.
-       */
+      document.getElementById('refresh')?.addEventListener('click', () => {
+        hideDetail();
+        fetchCalendar(true);
+      });
+
+      /* ------------------------------------------------------------------ *
+       * Events & Caching
+       * ------------------------------------------------------------------ */
+      const CALENDAR_CACHE_KEY = 'zebar-calendar.cache';
+      const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
       let icsText = null;
+      let isFetchingCalendar = false;
 
-      async function loadEvents() {
-        if (icsText === null) {
-          try {
-            const result = await zebar.shellExec('powershell.exe', [
-              '-NoProfile',
-              '-ExecutionPolicy',
-              'Bypass',
-              '-File',
-              calendarScript,
-            ]);
+      function readCalendarCache() {
+        try {
+          const raw = localStorage.getItem(CALENDAR_CACHE_KEY);
+          if (!raw) return null;
 
-            icsText = result.stdout || '';
-          } catch (error) {
-            console.warn('calendar feed unavailable:', error);
-            icsText = '';
+          const parsed = JSON.parse(raw);
+          if (typeof parsed.ics === 'string' && Number.isFinite(parsed.fetchedAt)) {
+            return parsed;
           }
+        } catch {
+          // localStorage unavailable or corrupted
         }
+        return null;
+      }
 
-        if (!icsText) return;
+      function writeCalendarCache(ics) {
+        try {
+          localStorage.setItem(
+            CALENDAR_CACHE_KEY,
+            JSON.stringify({
+              ics,
+              fetchedAt: Date.now(),
+            }),
+          );
+        } catch {
+          // Private browsing or quota limit
+        }
+      }
+
+      function parseEventsForCurrentView() {
+        if (!icsText) {
+          events = [];
+          return;
+        }
 
         // A month either side of the one on screen, so an event that starts in the
         // previous month and runs into this one still shows.
@@ -707,8 +732,65 @@
           console.warn('calendar could not be read:', error);
           events = [];
         }
+      }
 
-        render();
+      async function fetchCalendar(force = false) {
+        if (isFetchingCalendar) return;
+        isFetchingCalendar = true;
+
+        const refreshBtn = document.getElementById('refresh');
+        if (refreshBtn) refreshBtn.classList.add('is-spinning');
+
+        try {
+          const args = [
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            calendarScript,
+          ];
+          if (force) {
+            args.push('-Force');
+          }
+
+          const result = await zebar.shellExec('powershell.exe', args);
+          const stdout = (result.stdout || '').trim();
+
+          if (stdout) {
+            const isDifferent = stdout !== icsText;
+            icsText = stdout;
+            writeCalendarCache(stdout);
+
+            if (isDifferent) {
+              parseEventsForCurrentView();
+              render();
+            }
+          }
+        } catch (error) {
+          console.warn('calendar feed unavailable:', error);
+        } finally {
+          isFetchingCalendar = false;
+          if (refreshBtn) refreshBtn.classList.remove('is-spinning');
+        }
+      }
+
+      function initCalendar() {
+        const cached = readCalendarCache();
+        const now = Date.now();
+
+        if (cached && cached.ics) {
+          icsText = cached.ics;
+          parseEventsForCurrentView();
+          render();
+
+          // Refresh quietly in background if cache is older than 15 minutes
+          if (now - cached.fetchedAt > CACHE_TTL_MS) {
+            fetchCalendar(false);
+          }
+        } else {
+          // No cache available yet: perform initial fetch
+          fetchCalendar(false);
+        }
       }
 
       async function loadWeather() {
@@ -727,7 +809,7 @@
 
       renderWeekdays();
       render();
-      loadEvents();
+      initCalendar();
       loadWeather();
 
       /*
@@ -757,14 +839,19 @@
       }
 
       window.addEventListener('keydown', event => {
-        if (event.key !== 'Escape') return;
+        if (event.key === 'Escape') {
+          if (detailOpen()) {
+            hideDetail();
+            return;
+          }
 
-        if (detailOpen()) {
-          hideDetail();
+          close();
           return;
         }
 
-        close();
+        if (event.key === 'r' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+          fetchCalendar(true);
+        }
       });
     </script>
   </body>
