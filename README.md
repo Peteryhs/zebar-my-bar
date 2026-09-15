@@ -24,6 +24,22 @@ One click closes a panel that is open. A click outside a panel closes it too.
 
 The bar docks to the top edge, so maximized windows stop below it. If no window is maximized, the bar floats 6 pixels from the edge with 9 pixel corners.
 
+## Shortcuts and gestures
+
+**Volume and brightness.** You can change the volume and brightness straight from the volume tile on the bar:
+- **Scroll** over the tile to raise or lower the volume by 2%.
+- **Shift + scroll** over the tile to change the screen brightness by 5%.
+- **Click and drag** left or right on the tile to scrub volume continuously.
+- **Shift + drag** on the tile to scrub screen brightness.
+
+**Now playing tile.** The media tile shows the current track and artist. When playback stops, the tile dims and remembers the last track rather than vanishing.
+
+**Calendar panel.** While the calendar panel is open:
+- `Ctrl+F` focuses the event search box.
+- `R` reloads the calendar feeds.
+- `Esc` closes event details or dismisses the panel.
+- A banner appears at the top of the day view when an event starts in less than 15 minutes.
+
 ## Requirements
 
 - Windows 10 or Windows 11.

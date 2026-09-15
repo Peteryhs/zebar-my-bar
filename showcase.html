@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>my-bar Showcase Preview</title>
+    <link rel="preload" href="./assets/icons.css" as="style" />
+    <link rel="preload" href="./assets/nerdfont.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" type="text/css" href="./styles.css" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      }
+
+      /* Desktop Wallpaper using the actual user wallpaper */
+      .desktop-screen {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        background: url('./resources/desktop-wallpaper.jpg') center center / cover no-repeat;
+        overflow: hidden;
+      }
+
+      /* Top Bar positioning */
+      .top-bar-container {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        right: 6px;
+        height: 42px;
+        z-index: 100;
+      }
+
+      .top-bar-container #root {
+        position: relative;
+        height: 100%;
+        background: var(--bar-background);
+        border-radius: var(--float-radius);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+      }
+
+      /* Panel layer */
+      .panels-layer {
+        position: absolute;
+        top: 54px;
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        pointer-events: auto;
+        z-index: 90;
+      }
+
+      /* Left stack */
+      .stack-left {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 250px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      /* Center calendar */
+      .calendar-container {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 650px;
+      }
+
+      /* Right stack */
+      .stack-right {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 320px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      /* Panels match styles.css with enhanced drop shadow for backdrop depth */
+      .panel {
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        backdrop-filter: blur(20px);
+      }
+
+      /* Sliders track & thumb */
+      .control-slider {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 4px;
+        border-radius: 999px;
+        outline: none;
+      }
+      .control-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+        cursor: pointer;
+      }
+
+      .cal-search-input {
+        width: 160px !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop-screen">
+
+      <!-- TOP STATUS BAR -->
+      <div class="top-bar-container">
+        <div id="root">
+          <div class="app">
+            <div class="left">
+              <i class="logo nf nf-dev-windows11 clickable" title="Menu"></i>
+              <span class="app-name">Visual Studio Code</span>
+              <div class="media clickable">
+                <i class="nf nf-md-music"></i>
+                <span class="media-text">Pink Floyd – Comfortably Numb</span>
+              </div>
+            </div>
+
+            <div class="center clickable" title="Calendar">
+              Wed 21 May 9:54 AM
+            </div>
+
+            <div class="right">
+              <div class="volume clickable" title="Volume and brightness">
+                <i class="nf nf-md-volume_high"></i>
+                <span>72%</span>
+              </div>
+
+              <div class="system clickable" title="System panel">
+                <span class="stat">
+                  <i class="nf nf-oct-cpu"></i>
+                  <span>14%</span>
+                </span>
+                <span class="stat">
+                  <i class="nf nf-fae-chip"></i>
+                  <span>42%</span>
+                </span>
+              </div>
+
+              <div class="storage clickable" title="Storage">
+                <i class="nf nf-md-harddisk"></i>
+                <span>342 GB</span>
+              </div>
+
+              <div class="battery clickable" title="Battery panel">
+                <i class="nf nf-md-battery"></i>
+                <span>88%</span>
+              </div>
+
+              <div class="weather clickable" title="Weather">
+                <i class="nf nf-weather-day_sunny"></i>
+                <span>22°</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PANELS LAYER -->
+      <div class="panels-layer">
+        
+        <!-- LEFT SIDE STACK (WINDOWS MENU + MEDIA NOW PLAYING) -->
+        <div class="stack-left">
+          
+          <!-- 1. Windows Menu Panel -->
+          <div class="panel menu" style="width: 250px;">
+            <div class="menu-items">
+              <button class="menu-item"><i class="nf nf-md-information_outline"></i><span>About this computer</span></button>
+              <button class="menu-item"><i class="nf nf-md-cog"></i><span>System settings</span></button>
+              <div class="menu-separator"></div>
+              <button class="menu-item"><i class="nf nf-md-monitor"></i><span>Display</span></button>
+              <button class="menu-item"><i class="nf nf-md-volume_high"></i><span>Sound</span></button>
+              <button class="menu-item"><i class="nf nf-md-bluetooth"></i><span>Bluetooth</span></button>
+              <button class="menu-item"><i class="nf nf-md-wifi"></i><span>Network</span></button>
+              <div class="menu-separator"></div>
+              <button class="menu-item"><i class="nf nf-md-chart_line"></i><span>Task Manager</span></button>
+              <div class="menu-separator"></div>
+              <button class="menu-item"><i class="nf nf-md-lock"></i><span>Lock</span></button>
+              <button class="menu-item"><i class="nf nf-md-power_sleep"></i><span>Sleep</span></button>
+              <button class="menu-item"><i class="nf nf-md-restart"></i><span>Restart</span></button>
+              <button class="menu-item"><i class="nf nf-md-power"></i><span>Shut down</span></button>
+              <button class="menu-item"><i class="nf nf-md-logout"></i><span>Sign out</span></button>
+            </div>
+          </div>
+
+          <!-- 2. Media Panel -->
+          <div class="panel media-panel" style="width: 250px;">
+            <div class="panel-header">
+              <i class="nf nf-md-music"></i>
+              <span class="panel-title">Now playing</span>
+              <span class="panel-place">Spotify</span>
+            </div>
+
+            <div class="media-track">
+              <div class="media-title">Comfortably Numb</div>
+              <div class="media-artist">Pink Floyd</div>
+              <div class="media-album">The Wall (1979)</div>
+            </div>
+
+            <div class="media-progress">
+              <div class="level-track media-track-bar">
+                <div class="level-fill" style="width: 58%; background: #6ee7a8;"></div>
+              </div>
+              <div class="media-times">
+                <span>3:42</span>
+                <span>6:23</span>
+              </div>
+            </div>
+
+            <div class="media-controls">
+              <button class="media-button" title="Previous"><i class="nf nf-md-skip_previous"></i></button>
+              <button class="media-button media-button-main" title="Pause"><i class="nf nf-md-pause"></i></button>
+              <button class="media-button" title="Next"><i class="nf nf-md-skip_next"></i></button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- CENTER CALENDAR PANEL -->
+        <div class="calendar-container">
+          <div class="panel calendar-panel">
+            <div class="panel-header">
+              <i class="nf nf-md-calendar_month"></i>
+              <span class="panel-title" id="month-title">May 2026</span>
+              <div class="cal-search-box">
+                <i class="nf nf-fa-magnifying_glass cal-search-icon"></i>
+                <input type="text" class="cal-search-input" placeholder="Search... (Ctrl+F)" value="" />
+              </div>
+              <button class="panel-close" title="Refresh schedule"><i class="nf nf-md-restart"></i></button>
+              <button class="panel-close" title="Previous month"><i class="nf nf-md-chevron_left"></i></button>
+              <button class="panel-close" title="Today"><i class="nf nf-md-circle_small"></i></button>
+              <button class="panel-close" title="Next month"><i class="nf nf-md-chevron_right"></i></button>
+            </div>
+
+            <div class="cal-body">
+              <!-- Month grid & weather on left -->
+              <div class="cal-month">
+                <div class="cal-grid" id="weekdays">
+                  <div class="cal-weekday">M</div>
+                  <div class="cal-weekday">T</div>
+                  <div class="cal-weekday">W</div>
+                  <div class="cal-weekday">T</div>
+                  <div class="cal-weekday">F</div>
+                  <div class="cal-weekday">S</div>
+                  <div class="cal-weekday">S</div>
+                </div>
+                <div class="cal-grid" id="days">
+                  <!-- Week 1 -->
+                  <div class="cal-day other-month">27</div>
+                  <div class="cal-day other-month">28</div>
+                  <div class="cal-day other-month">29</div>
+                  <div class="cal-day other-month">30</div>
+                  <div class="cal-day has-events">1</div>
+                  <div class="cal-day">2</div>
+                  <div class="cal-day">3</div>
+                  <!-- Week 2 -->
+                  <div class="cal-day has-events">4</div>
+                  <div class="cal-day">5</div>
+                  <div class="cal-day has-events">6</div>
+                  <div class="cal-day">7</div>
+                  <div class="cal-day has-events">8</div>
+                  <div class="cal-day">9</div>
+                  <div class="cal-day">10</div>
+                  <!-- Week 3 -->
+                  <div class="cal-day">11</div>
+                  <div class="cal-day has-events">12</div>
+                  <div class="cal-day">13</div>
+                  <div class="cal-day has-events">14</div>
+                  <div class="cal-day">15</div>
+                  <div class="cal-day">16</div>
+                  <div class="cal-day">17</div>
+                  <!-- Week 4 -->
+                  <div class="cal-day has-events">18</div>
+                  <div class="cal-day">19</div>
+                  <div class="cal-day has-events">20</div>
+                  <div class="cal-day today selected has-events">21</div>
+                  <div class="cal-day has-events">22</div>
+                  <div class="cal-day">23</div>
+                  <div class="cal-day">24</div>
+                  <!-- Week 5 -->
+                  <div class="cal-day has-events">25</div>
+                  <div class="cal-day">26</div>
+                  <div class="cal-day has-events">27</div>
+                  <div class="cal-day">28</div>
+                  <div class="cal-day has-events">29</div>
+                  <div class="cal-day">30</div>
+                  <div class="cal-day">31</div>
+                  <!-- Week 6 -->
+                  <div class="cal-day other-month">1</div>
+                  <div class="cal-day other-month">2</div>
+                  <div class="cal-day other-month">3</div>
+                  <div class="cal-day other-month">4</div>
+                  <div class="cal-day other-month">5</div>
+                  <div class="cal-day other-month">6</div>
+                  <div class="cal-day other-month">7</div>
+                </div>
+
+                <div class="cal-weather">
+                  <div class="cal-weather-row">
+                    <i class="nf nf-weather-day_sunny cal-weather-icon"></i>
+                    <div class="cal-weather-temps">
+                      <span class="cal-weather-high">23°</span>
+                      <span class="cal-weather-low">14°</span>
+                    </div>
+                    <div class="cal-weather-rain">
+                      <i class="nf nf-weather-raindrop"></i> 0%
+                    </div>
+                  </div>
+                  <div class="cal-weather-sun">
+                    <span><i class="nf nf-weather-sunrise"></i> 05:48</span>
+                    <span><i class="nf nf-weather-sunset"></i> 20:32</span>
+                    <span style="margin-left: auto; opacity: 0.85;">14 h 44 min</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Day Timeline on right -->
+              <div class="cal-day-view">
+                <div class="cal-day-content">
+                  <div class="cal-upnext" style="margin-bottom: 6px;">
+                    <i class="nf nf-md-bell_ring"></i>
+                    <div class="cal-upnext-body">
+                      <span class="cal-upnext-when">Happening now</span>
+                      <span class="cal-upnext-title">Sprint Planning & Architecture</span>
+                    </div>
+                  </div>
+                  
+                  <div class="cal-day-title">Wednesday, May 21</div>
+                  
+                  <div class="cal-allday" style="margin-bottom: 6px;">
+                    <div class="cal-allday-item is-now">🚀 Release v1.0.0 Milestone</div>
+                  </div>
+
+                  <div class="cal-timeline" style="height: 250px;">
+                    <div class="cal-track" style="height: 380px;">
+                      <!-- Hours -->
+                      <div class="cal-hour" style="top: 0px;"><span class="cal-hour-label">8 AM</span></div>
+                      <div class="cal-hour" style="top: 34px;"><span class="cal-hour-label">9 AM</span></div>
+                      <div class="cal-hour" style="top: 68px;"><span class="cal-hour-label">10 AM</span></div>
+                      <div class="cal-hour" style="top: 102px;"><span class="cal-hour-label">11 AM</span></div>
+                      <div class="cal-hour" style="top: 136px;"><span class="cal-hour-label">12 PM</span></div>
+                      <div class="cal-hour" style="top: 170px;"><span class="cal-hour-label">1 PM</span></div>
+                      <div class="cal-hour" style="top: 204px;"><span class="cal-hour-label">2 PM</span></div>
+                      <div class="cal-hour" style="top: 238px;"><span class="cal-hour-label">3 PM</span></div>
+                      <div class="cal-hour" style="top: 272px;"><span class="cal-hour-label">4 PM</span></div>
+                      <div class="cal-hour" style="top: 306px;"><span class="cal-hour-label">5 PM</span></div>
+                      <div class="cal-hour" style="top: 340px;"><span class="cal-hour-label">6 PM</span></div>
+
+                      <div class="cal-lanes">
+                        <!-- Event 1: 9:00 - 10:15 (Active) -->
+                        <div class="cal-block is-now" style="top: 34px; height: 42px; left: 0%; width: 98%;">
+                          <div class="cal-block-title">Sprint Planning & Architecture</div>
+                          <div class="cal-block-time">9:00 – 10:15 AM · Conf Room A</div>
+                        </div>
+
+                        <!-- Event 2: 11:30 - 12:30 -->
+                        <div class="cal-block is-future" style="top: 119px; height: 34px; left: 0%; width: 98%;">
+                          <div class="cal-block-title">Product Design Sync</div>
+                          <div class="cal-block-time">11:30 AM – 12:30 PM</div>
+                        </div>
+
+                        <!-- Event 3: 2:00 - 3:00 -->
+                        <div class="cal-block is-future" style="top: 204px; height: 34px; left: 0%; width: 98%;">
+                          <div class="cal-block-title">Frontend Performance Review</div>
+                          <div class="cal-block-time">2:00 – 3:00 PM</div>
+                        </div>
+
+                        <!-- Event 4: 4:15 - 5:00 -->
+                        <div class="cal-block is-future" style="top: 280px; height: 26px; left: 0%; width: 98%;">
+                          <div class="cal-block-title">Team Weekly Retrospective</div>
+                          <div class="cal-block-time">4:15 – 5:00 PM</div>
+                        </div>
+                      </div>
+
+                      <!-- Current Time Marker (9:54 AM = 34 + 54/60 * 34 = ~64px) -->
+                      <div class="cal-now" style="top: 64px;">
+                        <span class="cal-now-label">9:54</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT SIDE STACK (ALL 5 PANELS STACKED VERTICALLY) -->
+        <div class="stack-right">
+          
+          <!-- 1. Controls Panel (Volume & Brightness) -->
+          <div class="panel controls-panel">
+            <div class="panel-header">
+              <i class="nf nf-md-tune_variant"></i>
+              <span class="panel-title">Volume and brightness</span>
+            </div>
+
+            <div class="control-block">
+              <div class="control-row">
+                <i class="nf nf-md-volume_high"></i>
+                <span class="control-label">Volume</span>
+                <span class="control-value">72%</span>
+                <button class="control-button" title="Mute"><i class="nf nf-md-volume_mute"></i></button>
+              </div>
+              <input class="control-slider" type="range" min="0" max="100" value="72" style="background: linear-gradient(to right, #6ee7a8 0%, #6ee7a8 72%, rgba(255, 255, 255, 0.18) 72%, rgba(255, 255, 255, 0.18) 100%);" />
+              <div class="control-place">Speakers (Realtek High Definition Audio)</div>
+            </div>
+
+            <div class="control-block">
+              <div class="control-row">
+                <i class="nf nf-md-brightness_6"></i>
+                <span class="control-label">Brightness</span>
+                <span class="control-value">85%</span>
+              </div>
+              <input class="control-slider" type="range" min="1" max="100" value="85" style="background: linear-gradient(to right, #6ee7a8 0%, #6ee7a8 85%, rgba(255, 255, 255, 0.18) 85%, rgba(255, 255, 255, 0.18) 100%);" />
+              <div class="control-place">Built-in Display</div>
+            </div>
+          </div>
+
+          <!-- 2. System Panel -->
+          <div class="panel system-panel">
+            <div class="panel-header">
+              <i class="nf nf-md-chip"></i>
+              <span class="panel-title">System</span>
+              <span class="panel-place">DESKTOP-PETER</span>
+            </div>
+
+            <div class="system-block">
+              <div class="system-line">
+                <span class="system-label">CPU</span>
+                <span class="system-value">14% · 3.8 GHz</span>
+              </div>
+              <div class="level-track">
+                <div class="level-fill" data-state="ok" style="width: 14%; background: #6ee7a8;"></div>
+              </div>
+            </div>
+
+            <div class="system-block">
+              <div class="system-line">
+                <span class="system-label">Memory</span>
+                <span class="system-value">13.4 / 32.0 GB · 42%</span>
+              </div>
+              <div class="level-track">
+                <div class="level-fill" data-state="ok" style="width: 42%; background: #6ee7a8;"></div>
+              </div>
+            </div>
+
+            <div class="panel-separator"></div>
+
+            <div class="panel-rows">
+              <div class="panel-row">
+                <i class="nf nf-md-memory"></i>
+                <span class="row-label">Cores</span>
+                <span class="row-value">12 logical / 6 physical</span>
+              </div>
+              <div class="panel-row">
+                <i class="nf nf-md-timer_outline"></i>
+                <span class="row-label">Uptime</span>
+                <span class="row-value">3 d 7 h 24 min</span>
+              </div>
+              <div class="panel-row">
+                <i class="nf nf-md-chip"></i>
+                <span class="row-label">Vendor</span>
+                <span class="row-value">AMD Ryzen 9 5900X</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. Storage Panel -->
+          <div class="panel storage-panel">
+            <div class="panel-header">
+              <i class="nf nf-md-harddisk"></i>
+              <span class="panel-title">Storage</span>
+              <span class="panel-place">2 disks</span>
+            </div>
+
+            <div id="disks">
+              <div class="system-block">
+                <div class="system-line">
+                  <span class="system-label">Local Disk <span class="storage-mount">C:</span></span>
+                  <span class="system-value">342 GB free of 1000 GB</span>
+                </div>
+                <div class="level-track">
+                  <div class="level-fill" data-state="ok" style="width: 66%; background: #6ee7a8;"></div>
+                </div>
+                <div class="storage-detail">66% used · NTFS · NVMe SSD</div>
+              </div>
+
+              <div class="system-block" style="margin-top: 6px;">
+                <div class="system-line">
+                  <span class="system-label">Storage <span class="storage-mount">D:</span></span>
+                  <span class="system-value">1.2 TB free of 2.0 TB</span>
+                </div>
+                <div class="level-track">
+                  <div class="level-fill" data-state="ok" style="width: 40%; background: #6ee7a8;"></div>
+                </div>
+                <div class="storage-detail">40% used · NTFS · Fixed Drive</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. Battery Panel -->
+          <div class="panel">
+            <div class="panel-header">
+              <i class="nf nf-md-battery"></i>
+              <span class="panel-title">Battery</span>
+            </div>
+
+            <div class="panel-hero">
+              <span class="hero-value">88%</span>
+              <span class="hero-state">on battery</span>
+            </div>
+
+            <div class="level-track">
+              <div class="level-fill" data-state="discharging" style="width: 88%; background: #6ee7a8;"></div>
+            </div>
+
+            <div class="panel-rows">
+              <div class="panel-row">
+                <i class="nf nf-md-timer_outline"></i>
+                <span class="row-label">Time left</span>
+                <span class="row-value">4 h 15 min</span>
+              </div>
+              <div class="panel-row">
+                <i class="nf nf-md-lightning_bolt"></i>
+                <span class="row-label">Power draw</span>
+                <span class="row-value">-12.4 W</span>
+              </div>
+              <div class="panel-row">
+                <i class="nf nf-md-heart_pulse"></i>
+                <span class="row-label">Health</span>
+                <span class="row-value">96%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. Weather Panel -->
+          <div class="panel weather-panel">
+            <div class="panel-header">
+              <i class="nf nf-weather-day_sunny"></i>
+              <span class="panel-title">Weather</span>
+              <span class="panel-place">New York, NY</span>
+            </div>
+
+            <div class="weather-now">
+              <i class="nf weather-now-icon nf-weather-day_sunny"></i>
+              <span class="weather-now-temp">22°</span>
+              <div class="weather-now-meta">
+                <span>feels like 21°</span>
+                <span>wind 12 km/h NW</span>
+                <span>48% humidity</span>
+              </div>
+            </div>
+
+            <div class="weather-sun">
+              <span><i class="nf nf-weather-sunrise"></i> 05:48</span>
+              <span><i class="nf nf-weather-sunset"></i> 20:32</span>
+              <span class="weather-daylength">14 h 44 min daylight</span>
+            </div>
+
+            <div class="panel-separator"></div>
+
+            <div class="forecast">
+              <div class="forecast-row">
+                <span class="forecast-day">Wed</span>
+                <i class="nf nf-weather-day_sunny"></i>
+                <span class="forecast-precip">0%</span>
+                <span class="forecast-range">
+                  <span class="forecast-high">23°</span>
+                  <span class="forecast-low">14°</span>
+                </span>
+              </div>
+              <div class="forecast-row">
+                <span class="forecast-day">Thu</span>
+                <i class="nf nf-weather-day_cloudy"></i>
+                <span class="forecast-precip">10%</span>
+                <span class="forecast-range">
+                  <span class="forecast-high">21°</span>
+                  <span class="forecast-low">13°</span>
+                </span>
+              </div>
+              <div class="forecast-row">
+                <span class="forecast-day">Fri</span>
+                <i class="nf nf-weather-rain"></i>
+                <span class="forecast-precip">75%</span>
+                <span class="forecast-range">
+                  <span class="forecast-high">18°</span>
+                  <span class="forecast-low">12°</span>
+                </span>
+              </div>
+              <div class="forecast-row">
+                <span class="forecast-day">Sat</span>
+                <i class="nf nf-weather-day_sunny"></i>
+                <span class="forecast-precip">0%</span>
+                <span class="forecast-range">
+                  <span class="forecast-high">24°</span>
+                  <span class="forecast-low">15°</span>
+                </span>
+              </div>
+              <div class="forecast-row">
+                <span class="forecast-day">Sun</span>
+                <i class="nf nf-weather-day_cloudy_high"></i>
+                <span class="forecast-precip">20%</span>
+                <span class="forecast-range">
+                  <span class="forecast-high">25°</span>
+                  <span class="forecast-low">16°</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+  </body>
+</html>

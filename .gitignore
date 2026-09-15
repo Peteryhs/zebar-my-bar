@@ -4,3 +4,6 @@ zpack.json.bak
 # Anything ending .local is yours and not the pack's.
 *.local
 *.local.*
+
+# The headless browser profile the preview scripts create.
+.browser-profile/
