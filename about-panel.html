@@ -208,6 +208,37 @@
         ].join('');
       }
 
+      const SPECS_CACHE_KEY = 'zebar-about.specs';
+      const SPECS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+      function readSpecsCache() {
+        try {
+          const raw = localStorage.getItem(SPECS_CACHE_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed.specs === 'object' && Number.isFinite(parsed.fetchedAt)) {
+            return parsed;
+          }
+        } catch {
+          // localStorage failure or corrupted
+        }
+        return null;
+      }
+
+      function writeSpecsCache(data) {
+        try {
+          localStorage.setItem(
+            SPECS_CACHE_KEY,
+            JSON.stringify({
+              specs: data,
+              fetchedAt: Date.now(),
+            }),
+          );
+        } catch {
+          // quota or private mode
+        }
+      }
+
       async function loadSpecs() {
         try {
           const result = await zebar.shellExec('powershell.exe', [
@@ -218,7 +249,11 @@
             specsScript,
           ]);
 
-          specs = JSON.parse((result.stdout || '').trim());
+          const parsed = JSON.parse((result.stdout || '').trim());
+          if (parsed) {
+            specs = parsed;
+            writeSpecsCache(parsed);
+          }
         } catch (error) {
           // The provider half of the panel still renders. Nothing is reported
           // on screen: a missing serial is not worth an error message.
@@ -226,6 +261,23 @@
         }
 
         render();
+      }
+
+      function initSpecs() {
+        const cached = readSpecsCache();
+        const now = Date.now();
+
+        if (cached && cached.specs) {
+          specs = cached.specs;
+          render();
+
+          // Refresh quietly in background if cache is older than 7 days
+          if (now - cached.fetchedAt > SPECS_CACHE_TTL_MS) {
+            loadSpecs();
+          }
+        } else {
+          loadSpecs();
+        }
       }
 
       cpu.onOutput(output => {
@@ -249,7 +301,7 @@
       });
 
       render();
-      loadSpecs();
+      initSpecs();
 
       /* Closing is done from outside, by the helper the bar starts when it opens
          this panel (see window-ctl.ps1). Escape here is a bonus. */

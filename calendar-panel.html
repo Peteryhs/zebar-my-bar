@@ -21,6 +21,20 @@
       <div class="panel-header">
         <i class="nf nf-md-calendar_month"></i>
         <span class="panel-title" id="month-title">Calendar</span>
+        <div class="cal-search-box">
+          <i class="nf nf-fa-magnifying_glass cal-search-icon"></i>
+          <input
+            type="text"
+            id="cal-search"
+            class="cal-search-input"
+            placeholder="Search... (Ctrl+F)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="cal-search-clear" id="cal-search-clear" title="Clear search" hidden>
+            <i class="nf nf-md-close"></i>
+          </button>
+        </div>
         <button class="panel-close" id="refresh" title="Refresh schedule (R)">
           <i class="nf nf-md-restart"></i>
         </button>
@@ -45,10 +59,13 @@
         </div>
 
         <div class="cal-day-view">
-          <div class="cal-upnext" id="upnext" hidden></div>
-          <div class="cal-day-title" id="day-title"></div>
-          <div class="cal-allday" id="allday"></div>
-          <div class="cal-timeline" id="timeline"></div>
+          <div class="cal-search-results" id="search-results" hidden></div>
+          <div class="cal-day-content" id="day-content">
+            <div class="cal-upnext" id="upnext" hidden></div>
+            <div class="cal-day-title" id="day-title"></div>
+            <div class="cal-allday" id="allday"></div>
+            <div class="cal-timeline" id="timeline"></div>
+          </div>
         </div>
       </div>
 
@@ -97,6 +114,10 @@
         timeline: document.getElementById('timeline'),
         upnext: document.getElementById('upnext'),
         detail: document.getElementById('detail'),
+        searchInput: document.getElementById('cal-search'),
+        searchClear: document.getElementById('cal-search-clear'),
+        searchResults: document.getElementById('search-results'),
+        dayContent: document.getElementById('day-content'),
       };
 
       const today = startOfDay(new Date());
@@ -604,6 +625,129 @@
         renderDay();
       }
 
+      let currentSearchResults = [];
+
+      function searchEvents(query) {
+        if (!icsText || !query || !query.trim()) return [];
+
+        const q = query.toLowerCase().trim();
+        const from = new Date(today.getFullYear() - 1, 0, 1);
+        const to = new Date(today.getFullYear() + 2, 11, 31);
+
+        let allOccurrences = [];
+        try {
+          allOccurrences = parseIcs(icsText, from, to);
+        } catch {
+          return [];
+        }
+
+        return allOccurrences.filter(event => {
+          const summary = (event.summary || '').toLowerCase();
+          const location = (event.location || '').toLowerCase();
+          const description = (event.description || '').toLowerCase();
+          return (
+            summary.includes(q) ||
+            location.includes(q) ||
+            description.includes(q)
+          );
+        });
+      }
+
+      function renderSearchResults(query) {
+        const results = searchEvents(query);
+        currentSearchResults = results;
+
+        el.searchClear.hidden = !query;
+
+        if (!query.trim()) {
+          el.searchResults.hidden = true;
+          el.dayContent.hidden = false;
+          return;
+        }
+
+        el.searchResults.hidden = false;
+        el.dayContent.hidden = true;
+
+        if (results.length === 0) {
+          el.searchResults.innerHTML =
+            '<div class="cal-search-empty">' +
+            '<i class="nf nf-fa-magnifying_glass" style="font-size: 20px; margin-bottom: 6px; opacity: 0.5;"></i>' +
+            '<span>No events found for "' + escapeHtml(query) + '"</span>' +
+            '</div>';
+          return;
+        }
+
+        const items = results.slice(0, 50).map((event, idx) => {
+          const dateStr = event.start.toLocaleDateString(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            year: event.start.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
+          });
+
+          const timeStr = event.allDay
+            ? 'All day'
+            : timeText(event.start) + ' – ' + timeText(event.end);
+
+          const locStr = event.location
+            ? '<span class="cal-search-item-loc"><i class="nf nf-md-map_marker"></i>' + escapeHtml(event.location) + '</span>'
+            : '';
+
+          return (
+            '<div class="cal-search-item" data-search-idx="' + idx + '">' +
+            '<div class="cal-search-item-meta">' +
+            '<span>' + escapeHtml(dateStr) + '</span>' +
+            '<span>·</span>' +
+            '<span>' + escapeHtml(timeStr) + '</span>' +
+            '</div>' +
+            '<div class="cal-search-item-title">' + escapeHtml(event.summary) + '</div>' +
+            locStr +
+            '</div>'
+          );
+        });
+
+        el.searchResults.innerHTML = items.join('');
+      }
+
+      el.searchResults.addEventListener('click', event => {
+        const item = event.target.closest('[data-search-idx]');
+        if (!item) return;
+
+        const idx = Number(item.dataset.searchIdx);
+        const eventObj = currentSearchResults[idx];
+        if (!eventObj) return;
+
+        // Jump to date
+        selected = new Date(eventObj.start.getFullYear(), eventObj.start.getMonth(), eventObj.start.getDate());
+        if (selected.getMonth() !== shownMonth.getMonth() || selected.getFullYear() !== shownMonth.getFullYear()) {
+          shownMonth = new Date(selected.getFullYear(), selected.getMonth(), 1);
+          parseEventsForCurrentView();
+        }
+
+        // Restore day content view
+        el.searchResults.hidden = true;
+        el.dayContent.hidden = false;
+        el.searchInput.value = '';
+        el.searchClear.hidden = true;
+
+        render();
+        showDetail(eventObj);
+      });
+
+      el.searchInput.addEventListener('input', e => {
+        hideDetail();
+        renderSearchResults(e.target.value);
+      });
+
+      el.searchClear.addEventListener('click', () => {
+        el.searchInput.value = '';
+        el.searchClear.hidden = true;
+        el.searchResults.hidden = true;
+        el.dayContent.hidden = false;
+        el.searchInput.focus();
+        render();
+      });
+
       // One handler for the timeline and the all day row, since both carry the index
       // of the event they stand for.
       document.querySelector('.cal-day-view').addEventListener('click', event => {
@@ -627,6 +771,7 @@
         if (!detailOpen()) return;
         if (event.target.closest('.cal-detail')) return;
         if (event.target.closest('[data-event]')) return;
+        if (event.target.closest('[data-search-idx]')) return;
 
         hideDetail();
       });
@@ -839,7 +984,26 @@
       }
 
       window.addEventListener('keydown', event => {
+        if ((event.ctrlKey && event.key === 'f') || (event.key === '/' && document.activeElement !== el.searchInput)) {
+          event.preventDefault();
+          el.searchInput.focus();
+          el.searchInput.select();
+          return;
+        }
+
         if (event.key === 'Escape') {
+          if (document.activeElement === el.searchInput) {
+            if (el.searchInput.value) {
+              el.searchInput.value = '';
+              el.searchClear.hidden = true;
+              el.searchResults.hidden = true;
+              el.dayContent.hidden = false;
+              render();
+            }
+            el.searchInput.blur();
+            return;
+          }
+
           if (detailOpen()) {
             hideDetail();
             return;
@@ -849,7 +1013,7 @@
           return;
         }
 
-        if (event.key === 'r' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        if (event.key === 'r' && !event.ctrlKey && !event.altKey && !event.metaKey && document.activeElement !== el.searchInput) {
           fetchCalendar(true);
         }
       });

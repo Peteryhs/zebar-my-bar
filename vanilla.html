@@ -120,8 +120,35 @@
         tile[node.dataset.panel] = node;
       }
 
+      function setText(node, text) {
+        if (!node) return;
+        const val = text ?? '';
+        if (node.textContent !== val) node.textContent = val;
+      }
+
+      function setClass(node, className) {
+        if (!node) return;
+        const val = className ?? '';
+        if (node.className !== val) node.className = val;
+      }
+
+      function setTitle(node, title) {
+        if (!node) return;
+        const val = title ?? '';
+        if (node.title !== val) node.title = val;
+      }
+
       function show(node, visible) {
-        node.hidden = !visible;
+        if (!node) return;
+        const hidden = !visible;
+        if (node.hidden !== hidden) node.hidden = hidden;
+      }
+
+      function setClassToggle(node, className, force) {
+        if (!node) return;
+        if (node.classList.contains(className) !== Boolean(force)) {
+          node.classList.toggle(className, force);
+        }
       }
 
       /* ------------------------------------------------------------------ *
@@ -170,7 +197,7 @@
       function render() {
         const out = providers.outputMap;
 
-        el.clock.textContent = out.date?.formatted ?? '';
+        setText(el.clock, out.date?.formatted);
 
         // Media: the current session, or the last one we saw.
         const session = out.media?.currentSession || null;
@@ -180,28 +207,35 @@
         show(tile['media-panel'], Boolean(track));
 
         if (track) {
-          tile['media-panel'].classList.toggle('stale', !session);
-          tile['media-panel'].title = session
-            ? 'Now playing'
-            : 'Last played (nothing is playing right now)';
-          el['media-icon'].className =
-            'nf ' + (track.isPlaying ? 'nf-md-pause' : 'nf-md-play');
-          el['media-text'].textContent =
+          setClassToggle(tile['media-panel'], 'stale', !session);
+          setTitle(
+            tile['media-panel'],
+            session
+              ? 'Now playing'
+              : 'Last played (nothing is playing right now)',
+          );
+          setClass(
+            el['media-icon'],
+            'nf ' + (track.isPlaying ? 'nf-md-pause' : 'nf-md-play'),
+          );
+          setText(
+            el['media-text'],
             (track.title || 'Unknown track') +
-            (track.artist ? '  ·  ' + track.artist : '');
+              (track.artist ? '  ·  ' + track.artist : ''),
+          );
         }
 
         show(tile['system-panel'], Boolean(out.cpu || out.memory));
 
         if (out.cpu) {
           const usage = Math.round(out.cpu.usage);
-          el.cpu.textContent = usage + '%';
+          setText(el.cpu, usage + '%');
           // The colour is the only thing that says a reading is worth noticing.
-          el.cpu.className = usage > 85 ? 'high-usage' : '';
+          setClass(el.cpu, usage > 85 ? 'high-usage' : '');
         }
 
         if (out.memory) {
-          el.memory.textContent = Math.round(out.memory.usage) + '%';
+          setText(el.memory, Math.round(out.memory.usage) + '%');
         }
 
         const playback = out.audio?.defaultPlaybackDevice || null;
@@ -211,9 +245,11 @@
         if (playback) {
           if (!isDraggingControl) {
             const volume = Math.round(playback.volume);
-            el['volume-icon'].className =
-              'nf ' + volumeIcon(volume, playback.isMuted);
-            el.volume.textContent = playback.isMuted ? 'muted' : volume + '%';
+            setClass(
+              el['volume-icon'],
+              'nf ' + volumeIcon(volume, playback.isMuted),
+            );
+            setText(el.volume, playback.isMuted ? 'muted' : volume + '%');
           }
         }
 
@@ -223,26 +259,33 @@
         show(tile['storage-panel'], Boolean(free));
 
         if (free) {
-          el.storage.textContent =
-            Math.round(free.iecValue) + free.iecUnit;
-          tile['storage-panel'].title =
-            'Storage · ' + (disk.mountPoint || disk.name || '');
+          setText(
+            el.storage,
+            Math.round(free.iecValue) + free.iecUnit,
+          );
+          setTitle(
+            tile['storage-panel'],
+            'Storage · ' + (disk.mountPoint || disk.name || ''),
+          );
         }
 
         show(tile['battery-panel'], Boolean(out.battery));
 
         if (out.battery) {
           const percent = Math.round(out.battery.chargePercent);
-          el['battery-icon'].className = 'nf ' + batteryIcon(out.battery.chargePercent);
-          el.battery.textContent = percent + '%';
+          setClass(
+            el['battery-icon'],
+            'nf ' + batteryIcon(out.battery.chargePercent),
+          );
+          setText(el.battery, percent + '%');
           show(el.charging, out.battery.isCharging);
 
           if (out.battery.powerConsumption !== null && out.battery.powerConsumption !== undefined) {
             const watts = Math.abs(out.battery.powerConsumption);
             const sign = out.battery.isCharging ? '+' : '-';
-            tile['battery-panel'].title = `Battery · ${percent}% (${sign}${watts.toFixed(1)} W)`;
+            setTitle(tile['battery-panel'], `Battery · ${percent}% (${sign}${watts.toFixed(1)} W)`);
           } else {
-            tile['battery-panel'].title = 'Battery panel';
+            setTitle(tile['battery-panel'], 'Battery panel');
           }
         }
       }
@@ -265,11 +308,15 @@
 
           if (!now) return;
 
-          el['weather-icon'].className =
-            'nf ' + weatherIcon(now.weather_code, now.is_day === 1);
-          el.weather.textContent = Math.round(now.temperature_2m) + '°C';
-          tile['weather-panel'].title =
-            'Forecast' + (data.place ? ' · ' + data.place : '');
+          setClass(
+            el['weather-icon'],
+            'nf ' + weatherIcon(now.weather_code, now.is_day === 1),
+          );
+          setText(el.weather, Math.round(now.temperature_2m) + '°C');
+          setTitle(
+            tile['weather-panel'],
+            'Forecast' + (data.place ? ' · ' + data.place : ''),
+          );
         },
       });
 
@@ -557,11 +604,11 @@
        * process polling for the same thing.
        */
       function setForegroundState(state) {
-        document.body.classList.toggle('is-floating', state === 'float');
+        setClassToggle(document.body, 'is-floating', state === 'float');
       }
 
       function setAppName(name) {
-        el['app-name'].textContent = name;
+        setText(el['app-name'], name);
         show(el['app-name'], Boolean(name));
       }
 

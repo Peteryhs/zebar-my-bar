@@ -1,15 +1,16 @@
 {
   "$schema": "https://github.com/glzr-io/zebar/raw/v3.0.0/resources/zpack-schema.json",
   "name": "my-bar",
-  "version": "0.0.0",
-  "description": "A basic widget pack for testing and development.",
+  "version": "1.0.0",
+  "description": "A docked top bar for Windows: media, system, storage, weather, battery, calendar and window controls in one 42 pixel strip.",
   "tags": [
-    "topbar"
+    "topbar",
+    "windows"
   ],
   "previewImages": [
     "./resources/preview-image-1.png"
   ],
-  "repositoryUrl": "",
+  "repositoryUrl": "https://github.com/Peteryhs/zebar-my-bar",
   "widgets": [
     {
       "name": "vanilla",
