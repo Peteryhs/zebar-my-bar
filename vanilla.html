@@ -169,6 +169,19 @@
       // thing that played instead of disappearing.
       let lastTrack = null;
 
+      // The battery provider is the one reading that blips. A failed driver
+      // refresh is emitted as an error, zebar sets that provider's output to
+      // null, and the next tick from any other provider re-renders with
+      // `out.battery === null` - which used to hide the whole tile until the
+      // next good battery read (a full refresh interval later). Keep the last
+      // good reading, dim it while it is not live, and restart a provider that
+      // has gone quiet for good.
+      let lastBattery = null;
+      let batteryRestartTimer = null;
+      let batteryRetries = 0;
+
+      const BATTERY_RESTART_AFTER_MS = 120000;
+
       function batteryIcon(percent) {
         if (percent > 90) return 'nf-fa-battery_4';
         if (percent > 70) return 'nf-fa-battery_3';
@@ -269,29 +282,77 @@
           );
         }
 
-        show(tile['battery-panel'], Boolean(out.battery));
+        // A null battery output is a failed reading, never an absent battery,
+        // so fall back to the last good one instead of hiding the tile.
+        if (out.battery && Number.isFinite(out.battery.chargePercent)) {
+          lastBattery = out.battery;
+          batteryRetries = 0;
 
-        if (out.battery) {
-          const percent = Math.round(out.battery.chargePercent);
-          setClass(
-            el['battery-icon'],
-            'nf ' + batteryIcon(out.battery.chargePercent),
-          );
-          setText(el.battery, percent + '%');
-          show(el.charging, out.battery.isCharging);
-
-          if (out.battery.powerConsumption !== null && out.battery.powerConsumption !== undefined) {
-            const watts = Math.abs(out.battery.powerConsumption);
-            const sign = out.battery.isCharging ? '+' : '-';
-            setTitle(tile['battery-panel'], `Battery · ${percent}% (${sign}${watts.toFixed(1)} W)`);
-          } else {
-            setTitle(tile['battery-panel'], 'Battery panel');
+          if (batteryRestartTimer) {
+            clearTimeout(batteryRestartTimer);
+            batteryRestartTimer = null;
           }
+        }
+
+        const battery = lastBattery;
+        const live = Boolean(out.battery && Number.isFinite(out.battery.chargePercent));
+
+        show(tile['battery-panel'], Boolean(battery));
+        setClassToggle(tile['battery-panel'], 'stale', Boolean(battery) && !live);
+
+        if (battery) {
+          const percent = Math.round(battery.chargePercent);
+
+          setClass(el['battery-icon'], 'nf ' + batteryIcon(percent));
+          setText(el.battery, percent + '%');
+          show(el.charging, battery.isCharging);
+
+          let title = `Battery · ${percent}%`;
+
+          if (battery.powerConsumption !== null && battery.powerConsumption !== undefined) {
+            const watts = Math.abs(battery.powerConsumption);
+            const sign = battery.isCharging ? '+' : '-';
+            title += ` (${sign}${watts.toFixed(1)} W)`;
+          }
+
+          setTitle(
+            tile['battery-panel'],
+            live ? title : title + ' · last reading, not live',
+          );
         }
       }
 
       providers.onOutput(render);
       render();
+
+      /*
+       * An error only reaches onError listeners; render() is not called for it,
+       * so a failed read leaves the bar sitting on the last number with no sign
+       * of trouble. A provider whose very first read failed stops emitting for
+       * good, and a restart is the only way back short of reloading the bar, so
+       * restart one that has stayed quiet, then re-arm (capped so a machine with
+       * no battery cannot restart it forever).
+       */
+      function armBatteryRestart() {
+        if (batteryRestartTimer || !lastBattery || batteryRetries >= 5) return;
+
+        batteryRestartTimer = setTimeout(() => {
+          batteryRestartTimer = null;
+
+          if (providers.outputMap.battery) return;
+
+          batteryRetries += 1;
+          providers.raw.battery.restart();
+          armBatteryRestart();
+        }, BATTERY_RESTART_AFTER_MS);
+      }
+
+      providers.raw.battery.onError(() => {
+        // Re-render on the error itself: nothing else draws until some other
+        // provider ticks, and the dim is what tells him the number is old.
+        render();
+        armBatteryRestart();
+      });
 
       /*
        * Weather does not come from a zebar provider: that one geolocates through

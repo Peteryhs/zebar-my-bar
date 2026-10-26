@@ -256,6 +256,12 @@ body.is-floating #root {
   position: relative;
 }
 
+/* A reading that stopped arriving is dimmed instead of hidden, so the tile
+   never changes width and a stale number cannot pass for a live one. */
+.battery.stale {
+  opacity: 0.55;
+}
+
 /* Charging bolt sits after the percentage, inline, so the tile keeps one
    rhythm instead of an absolutely placed glyph. */
 .battery .charging-icon {
