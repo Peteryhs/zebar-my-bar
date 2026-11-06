@@ -35,6 +35,7 @@
     <script type="module">
       import * as zebar from './assets/vendor/zebar.js';
       import { fitWindowToCard } from './assets/panel.js';
+      import { anchoredPlacement } from './assets/placement.js';
 
       const widget = zebar.currentWidget();
 
@@ -81,6 +82,7 @@
          allowlisted in zpack.json. */
       const items = [
         { icon: 'nf-md-information_outline', label: 'About this computer', widget: 'about-panel' },
+        { icon: 'nf-md-tune_variant', label: 'Bar settings', widget: 'settings-panel' },
         { icon: 'nf-md-cog', label: 'System settings', cmd: ['/c', 'start', 'ms-settings:'] },
         { separator: true },
         { icon: 'nf-md-monitor', label: 'Display', cmd: ['/c', 'start', 'ms-settings:display'] },
@@ -152,7 +154,10 @@
        * this page before the shell call reaches the app, which is why nothing
        * used to happen.
        */
+      let actionInFlight = false;
       async function run(item) {
+        if (actionInFlight) return;
+        actionInFlight = true;
         try {
           if (item.widget) {
             /*
@@ -161,20 +166,31 @@
              * close() still runs below so the menu goes away immediately rather
              * than on the guard's next scan.
              */
-            await zebar.startWidgetPreset(item.widget, await panelPreset, {
-              packId: widget.packId,
-            });
+            if (item.widget === 'settings-panel') {
+              const { currentMonitor } = await import('./assets/vendor/tauri-window.js');
+              const [monitor, position] = await Promise.all([currentMonitor(), widget.tauriWindow.outerPosition()]);
+              if (!monitor?.name) throw new Error('Display information unavailable. Try again.');
+              await zebar.startWidget(item.widget, anchoredPlacement({
+                rect: { left: 0, width: 400, bottom: 0 }, barPosition: position, monitor,
+                width: 400, height: 740, align: 'start', gap: 0,
+              }), { packId: widget.packId });
+            } else {
+              await zebar.startWidgetPreset(item.widget, await panelPreset, { packId: widget.packId });
+            }
           } else if (item.cmd) {
             await zebar.shellExec('cmd.exe', item.cmd);
           } else if (item.power) {
             await zebar.shellExec('powershell.exe', [
               '-NoProfile',
+              '-ExecutionPolicy',
+              'Bypass',
               '-File',
               powerScript,
               item.power,
             ]);
           }
         } catch (err) {
+          actionInFlight = false;
           showError('Failed: ' + String((err && err.message) || err));
           return;
         }

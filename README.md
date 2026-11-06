@@ -11,6 +11,7 @@ The bar is one widget. Each part of it opens a panel widget:
 | Part of the bar | Opens | Panel shows |
 | --- | --- | --- |
 | App mark (left) | `windows-menu` | Task manager, Settings, and the power actions |
+| Bar settings in the Windows-icon menu | `settings-panel` | Spacing, visible readings, visualizer, and Pocket dinosaur |
 | Foreground window name | `windows-menu` | The same menu |
 | Now playing tile | `media-panel` | Track, artist, album, and transport buttons |
 | Clock | `calendar-panel` | Month grid, agenda, and a search box |
@@ -22,7 +23,26 @@ The bar is one widget. Each part of it opens a panel widget:
 
 One click closes a panel that is open. A click outside a panel closes it too.
 
+Popups open directly beneath the tile you select, on that tile's display. Their
+position is clamped to the display edges, including on monitors with different
+scaling. Long panels scroll to stay on screen.
+
 The bar docks to the top edge, so maximized windows stop below it. If no window is maximized, the bar floats 6 pixels from the edge with 9 pixel corners.
+
+The window helper checks the Windows work area and the bar's topmost flag every
+two seconds. If either is lost, it repairs the existing bar window's appbar
+registration and position without taking focus. This recovers lost reservations
+after sleep, Explorer restarts, or display changes; it uses physical monitor
+coordinates so DPI scaling does not reserve the wrong height. Checks from
+multiple monitors are serialized, and healthy reservations are left alone.
+
+Recovery reads the fixed height from `zpack.json` once per helper startup and
+scales it for each display. It never uses a window's temporary height as the
+reservation size. An oversized window or work-area reservation is unhealthy;
+recovery releases only this bar's old reservation before rebuilding its strip.
+Oversized or vertically shifted shell results are rejected. Brief invalid
+window sizes are allowed to settle for one second before repair, so recovery
+does not race the initial WebView setup or a display transition.
 
 ## Shortcuts and gestures
 
@@ -33,6 +53,62 @@ The bar docks to the top edge, so maximized windows stop below it. If no window 
 - **Shift + drag** on the tile to scrub screen brightness.
 
 **Now playing tile.** The media tile shows the current track and artist. When playback stops, the tile dims and remembers the last track rather than vanishing.
+
+**Battery tile.** The charge is read every 30 seconds. A battery is one of the
+few readings that comes from the driver through WMI, and asking for it every
+couple of seconds made that refresh fail; the tile then kept its last number and
+dimmed, which looked like a dead reading rather than an old one. If a read does
+fail, the tile keeps the last value, dims it, and recreates the reader on a
+widening delay (one minute, doubling to five) until readings flow again. A stale
+number is dimmed only once it is older than three polls; the tooltip says when it
+is the last reading rather than a live one.
+
+**Bar settings.** Click the Windows icon, then **Bar settings**. A dedicated
+window replaces the menu at the same position. Changes apply immediately across
+your bars and persist across reloads. You can change compact spacing, choose
+whether to show the app name, CPU/memory, storage and weather, and enable the
+visualizer or dinosaur game.
+
+**Playback visualizer.** Enable it in Bar settings. It only
+appears while a current media session is playing, and disappears when paused,
+stopped, or disabled, even if the media tile remembers the previous track.
+Clicking the equalizer turns it off. This is a decorative playback animation,
+not an audio spectrum: no microphone, audio capture, or extra helper is needed.
+It respects reduced motion and starts off; your choice is remembered.
+
+**Pocket dinosaur.** Enable it in Bar settings. A small, still dinosaur and a
+**Run** button appear on the left. Click Run to turn the entire bar into a course:
+the dinosaur runs from left to right beneath the real readings, then loops back
+for a faster lap. The readings remain visible as landmarks, and return to normal
+when you leave. Click the track, Space, or Up to jump; hold Down, S, or the right
+mouse button to duck. P or the pause button pauses/resumes; Escape or × leaves.
+Click or Space retries after a collision.
+
+The course mixes cacti, cactus clusters, rocks, flying birds, gaps, data crates
+near storage, and heat vents near CPU/memory. Jump over ground hazards and gaps;
+duck beneath birds. Clearing consecutive hazards increases the bonus. The real
+clock creates a checkpoint and briefly slows the whole game; retries return to
+the clock after reaching it. The battery grants a one-hit shield. Playing media
+leaves collectible notes. The corresponding reading gives a small hop when its
+reward is collected, respecting reduced motion. These encounters do not change
+volume, battery readings, system settings, or media playback.
+
+It pauses when focus moves away, the page becomes hidden, or the bar changes
+size. Best scores are saved locally.
+The game starts disabled, loads only when enabled, renders at most 30 times per
+second during play, and schedules no frames while idle, paused, or finished.
+Pixel artwork uses separate running, jumping, crouching, and bird wing poses;
+the small sprite images are cached once and reused when drawing frames.
+It never changes the bar's height or its reserved screen space.
+
+**Keyboard.** Tab to a bar control, then press Enter or Space to open it. Left
+and Right move between visible controls; Home and End jump to either end. Esc
+dismisses a panel.
+
+The clock updates at minute boundaries instead of redrawing every tile once a
+second. Popup resize requests are combined per frame and sent in order. The
+visualizer uses CSS transforms with no JavaScript animation loop or added runtime
+dependencies. Narrow displays hide secondary readings before controls overlap.
 
 **Calendar panel.** While the calendar panel is open:
 - `Ctrl+F` focuses the event search box.
@@ -82,12 +158,18 @@ Note: the pack `name` field in `zpack.json` must stay `my-bar`. The value in `st
 
 The pack has no build step. Each widget is a plain HTML page with an inline CSS link to `styles.css`. Zebar gives the pages live data through providers.
 
+Run `node scripts/test-ui.mjs` for the dependency-free UI checks (Edge or Chrome
+required). They use a simulated Zebar bridge, never change system settings, and
+save screenshots in `resources/qa.local/`. Native window focus, docking, and
+mixed-DPI positioning still need a check in a running Zebar instance.
+
 Two parts of the operating system have no provider, so the pack reads them with PowerShell helpers in `scripts/`:
 
-- `window-ctl.ps1` tracks the panel windows and closes a panel when a click lands outside it.
+- `window-ctl.ps1` tracks the panel windows and closes a panel when a click lands outside it. If the bar's page goes away, the guard keeps watching, so a panel that outlives it can still be dismissed; a reloaded bar's guard takes over within a few seconds.
+- `bar-dock.cs`, loaded by that same helper, repairs lost top-edge reservations and topmost state. Repairs are logged to `%TEMP%\zebar-window-ctl.log`.
 - `brightness.ps1`, `power.ps1`, `specs.ps1`, and `calendar.ps1` do the tasks that a web page cannot do alone.
 
-`zpack.json` gives each helper an exact `shellCommands` rule, so the pack asks for three commands and no more.
+`zpack.json` gives each helper an exact `shellCommands` rule, so the pack asks for three commands and no more. Every helper is started with `-ExecutionPolicy Bypass`: this machine refuses unsigned scripts even though the policy reads `RemoteSigned`, and without that flag PowerShell exits before the script's first line — which is exactly how the panel guard stopped starting, silently, with no trace of its own.
 
 ## Layout
 
@@ -112,12 +194,47 @@ This pack started as a copy of the starter pack that ships with [zebar](https://
 
 The vendored files in `assets/vendor/` come from zebar and its dependencies. See the licenses of those projects.
 
+## Docking diagnosis and verification
+
+Zebar 3.3.1 registers its Windows appbar with no callback and has an explicit
+TODO for `ABN_POSCHANGED` handling in
+[its docking implementation](https://github.com/glzr-io/zebar/blob/v3.3.1/packages/desktop/src/common/windows/app_bar.rs).
+The initial `top_most` and `dockToEdge` settings therefore do not guarantee that
+the Windows reservation stays healthy. This pack adds a recovery check using
+the same HWND, following the Windows `ABM_QUERYPOS` / `ABM_SETPOS`
+[positioning protocol](https://learn.microsoft.com/en-us/windows/win32/shell/application-desktop-toolbars).
+It does not use a second appbar or overwrite the desktop work area globally.
+
+From this folder, `powershell.exe -NoProfile -File scripts/bar-dock.ps1` prints
+each bar's physical bounds, monitor work area, and protection flags without
+changing anything. Add `-Repair` for a manual recovery.
+
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-bar-dock.ps1 -RegressionOnly`
+runs the actual repair logic against a simulated Windows shell without changing
+desktop windows. It covers oversized startup windows, stale reservations,
+fractional DPI scaling, negative monitor coordinates, unsafe shell responses,
+failed repairs, and repeated healthy checks.
+
+Without `-RegressionOnly`, `scripts/test-bar-dock.ps1` also verifies the live bar's health. Its optional
+`-ExerciseRecovery` switch briefly removes the bar's reservation and topmost
+flag, checks recovery, and checks repeated calls for duplicate reserved space.
+Use that switch only when ready for the desktop layout to change briefly.
+Add `-ObserveAutomaticRecovery` to have the test wait for the running bar's
+helper to perform the repairs instead of calling the repair method directly.
+The automatic guard should recover a lost reservation within about two seconds,
+or up to four seconds when it first needs to let invalid geometry settle, while
+its helper and the Windows shell are responsive. Diagnostics include both the
+expected DPI-scaled height and actual window bounds; repair logs also record the
+actual height. Restart Zebar after changing recovery code to replace helpers
+that already loaded the previous version.
+
 ## Limitations
 
 - Windows only. `dockToEdge` does nothing on Linux and macOS, and the brightness helper uses WMI.
 - The bar is one widget, so a broken provider can hide its tile until the next reload.
 - Zebar holds port `127.0.0.1:6124`. Start one instance only.
 - The pack is personal. The panel sizes and the offsets fit a 2880 x 1800 screen.
+- Reserved work area constrains normal maximized and snapped windows. Fullscreen apps and windows deliberately placed outside the work area can still overlap the strip.
 
 ## License
 

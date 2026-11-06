@@ -32,8 +32,20 @@ export function fitWindowToCard(widget, selector = '.panel') {
   const tauriWindow = widget.tauriWindow;
   let lastHeight = 0;
   let lastWidth = 0;
+  let frame = 0;
+  let sizing = false;
+  let dirty = false;
 
-  function fit() {
+  // Provider updates can resize several rows in one turn. Measure just once
+  // per frame and serialize native calls so an older resize cannot win a race.
+  function scheduleFit() {
+    dirty = true;
+    if (frame || sizing) return;
+    frame = requestAnimationFrame(() => { frame = 0; fit(); });
+  }
+
+  async function fit() {
+    dirty = false;
     const rect = card.getBoundingClientRect();
 
     // rect.top is the body margin, counted twice so the gap under the card
@@ -54,17 +66,39 @@ export function fitWindowToCard(widget, selector = '.panel') {
      */
     if (height === lastHeight && width === lastWidth) return;
 
-    lastHeight = height;
-    lastWidth = width;
-
     // A plain object rather than LogicalSize, which moved modules between Tauri
     // versions. setSize only looks at these three fields.
-    tauriWindow
-      .setSize({ type: 'Logical', width, height })
-      .catch(err => console.warn('could not size the panel window:', err));
+    sizing = true;
+    try {
+      await tauriWindow.setSize({ type: 'Logical', width, height });
+      lastHeight = height;
+      lastWidth = width;
+    } catch (err) {
+      console.warn('could not size the panel window:', err);
+    } finally {
+      sizing = false;
+      if (dirty) scheduleFit();
+    }
   }
 
-  fit();
+  // Accessible names for the shared icon-only panel controls.
+  for (const button of card.querySelectorAll('button[title]')) {
+    if (!button.textContent.trim() && !button.getAttribute('aria-label')) button.setAttribute('aria-label', button.title);
+  }
+  card.setAttribute('role', 'dialog');
+  const title = card.querySelector('.panel-title');
+  card.setAttribute('aria-label', title?.textContent || 'System menu');
+
+  // Long drive lists and the expanded menu scroll inside the current display.
+  import('./vendor/tauri-window.js').then(async ({ currentMonitor }) => {
+    const [monitor, position] = await Promise.all([currentMonitor(), tauriWindow.outerPosition()]);
+    if (!monitor) return;
+    const available = (monitor.position.y + monitor.size.height - position.y) / monitor.scaleFactor - 16;
+    card.style.maxHeight = Math.max(80, Math.floor(available)) + 'px';
+    card.style.overflowY = 'auto';
+  }).catch(error => console.warn('Could not bound panel to display:', error));
+
+  scheduleFit();
 
   /*
    * Panels fill in after they open: a provider's first output, the specs script
@@ -73,6 +107,11 @@ export function fitWindowToCard(widget, selector = '.panel') {
    * nothing to see.
    */
   if (typeof ResizeObserver === 'function') {
-    new ResizeObserver(fit).observe(card);
+    const observer = new ResizeObserver(scheduleFit);
+    observer.observe(card);
+    window.addEventListener('pagehide', () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    }, { once: true });
   }
 }

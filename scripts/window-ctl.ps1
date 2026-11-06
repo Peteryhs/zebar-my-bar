@@ -39,9 +39,11 @@
 # A trace file lives at %TEMP%\zebar-window-ctl.log.
 
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('close', 'guard')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('close', 'guard', 'diag')][string]$Action,
   [Parameter(Mandatory = $true)][string]$Match,
   [string]$Owner = 'default',
+  [string]$Message = '',
+  [string]$BarTitle = '',
   # How often the mouse buttons are read. A click is held for something like 50 to
   # 150ms, so this has to be well inside that.
   [int]$PollMs = 20,
@@ -71,6 +73,7 @@ param(
   [int]$GraceMs = 0,
   [int]$ForegroundMs = 250,
   [int]$HousekeepingMs = 5000,
+  [ValidateRange(500, 60000)][int]$DockCheckMs = 2000,
   [int]$MaxLifetimeMinutes = 240
 )
 
@@ -422,6 +425,15 @@ function Close-Window([int64]$handle) {
   return (-not $survived)
 }
 
+if ($Action -eq 'diag') {
+  # A line in the trace log from the bar itself. The bar can only talk to the
+  # outside world through shell commands, and its own console is not visible to
+  # anybody: a guard that fails to start leaves no trace at all, which is
+  # indistinguishable from a bar that never asked for one.
+  Write-Trace ('diag: {0}' -f $Message)
+  exit 0
+}
+
 if ($Action -eq 'close') {
   $closed = 0
 
@@ -438,6 +450,20 @@ if ($Action -eq 'close') {
 # ---------------------------------------------------------------------------
 # -Action guard
 # ---------------------------------------------------------------------------
+
+if ($BarTitle -ne '') {
+  Add-Type -Path (Join-Path $PSScriptRoot 'bar-dock.cs')
+  try {
+    . (Join-Path $PSScriptRoot 'bar-dock-config.ps1')
+    $dockHeight = Get-BarDockHeight
+    Write-Trace ('dock guard enabled title={0} interval={1}ms logicalHeight={2}px' -f $BarTitle, $DockCheckMs, $dockHeight)
+  } catch {
+    # Bad configuration must not turn off menu dismissal or reserve a guessed size.
+    Write-Trace ('dock recovery disabled: {0}' -f $_.Exception.Message)
+    $BarTitle = ''
+  }
+}
+$lastDockCheck = (Get-Date).AddYears(-1)
 
 # One guard per bar. The bar passes an -Owner identifying the display it sits on,
 # so two bars (one per monitor) do not retire each other, while a reloaded bar
@@ -464,6 +490,7 @@ Write-Trace ('guard start names={0} pid={1} owner={2}' -f ($matchNames -join '|'
 # the page while this process saw nothing.
 $stdin = New-Object System.IO.StreamReader ([Console]::OpenStandardInput())
 $pendingRead = $stdin.ReadLineAsync()
+$stdinClosed = $false
 
 $active = @()
 # A closed window can linger for a moment, so remember what we just closed to
@@ -490,9 +517,28 @@ while ($true) {
 
   $now = Get-Date
 
+  # Zebar's Windows appbar implementation does not handle ABN_POSCHANGED.
+  # Sleep, Explorer and display changes can therefore lose the reservation
+  # while leaving a perfectly visible topmost bar covering window controls.
+  # Reuse its HWND and repair only unhealthy state; never reserve a second strip.
+  if ($BarTitle -ne '' -and ($now - $lastDockCheck).TotalMilliseconds -ge $DockCheckMs) {
+    $lastDockCheck = $now
+    try {
+      foreach ($dock in [ZebarDock.Guard]::Check($BarTitle, $true, $dockHeight)) {
+        if ($dock.Repair -ne '') {
+          Write-Trace ('dock hwnd={0} {1} reserved={2} topmost={3} workTop={4} barBottom={5} expectedHeight={6} actualHeight={7}' -f
+            $dock.Handle, $dock.Repair, $dock.Reserved, $dock.TopMost, $dock.Work.Top, $dock.Bounds.Bottom,
+            $dock.ExpectedHeight, ($dock.Bounds.Bottom - $dock.Bounds.Top))
+        }
+      }
+    } catch {
+      Write-Trace ('dock check failed: {0}' -f $_.Exception.Message)
+    }
+  }
+
   if ($clicked) { $lastClickAt = $now }
 
-  if ($pendingRead.IsCompleted) {
+  if (-not $stdinClosed -and $pendingRead.IsCompleted) {
     $line = ''
 
     try {
@@ -502,11 +548,19 @@ while ($true) {
     }
 
     if ($null -eq $line) {
-      Write-Trace 'guard exit: stdin closed'
-      break
+      # The bar's page is gone: it was reloaded, it crashed, or its renderer was
+      # discarded. Keep watching, because the panels it had open are still on
+      # screen and this is the only thing that can dismiss them. Exiting here is
+      # what stranded a panel with nothing able to close it.
+      #
+      # A reloaded bar starts its own guard, and that one takes over through the
+      # pid file within a few seconds. The exit below on a superseded pid is the
+      # only way this process is retired early.
+      Write-Trace 'guard: bar page gone, still watching panels'
+      $stdinClosed = $true
+    } else {
+      $pendingRead = $stdin.ReadLineAsync()
     }
-
-    $pendingRead = $stdin.ReadLineAsync()
   }
 
   # Every click is written down, whatever is decided about it, along with what the

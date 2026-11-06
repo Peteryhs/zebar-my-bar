@@ -73,8 +73,6 @@
       // Keep this window the same height as the card (see assets/panel.js).
       fitWindowToCard(widget);
 
-
-
       const media = zebar.createProvider({ type: 'media' });
 
       const el = {
@@ -95,18 +93,25 @@
       let session = null;
       let positionSeconds = 0;
       let durationSeconds = 0;
+      let timelineTimer = null;
+      let positionUpdatedAt = performance.now();
 
-      /*
-       * GSMTC reports the timeline in 100ns ticks (10^7 per second). The check
-       * keeps the panel readable if a platform reports milliseconds instead.
-       */
+      function scheduleTimeline() {
+        clearTimeout(timelineTimer);
+        if (document.hidden || !session?.isPlaying || positionSeconds >= durationSeconds) return;
+        timelineTimer = setTimeout(() => {
+          const now = performance.now();
+          positionSeconds = Math.min(durationSeconds, positionSeconds + (now - positionUpdatedAt) / 1000);
+          positionUpdatedAt = now;
+          renderTimeline();
+          scheduleTimeline();
+        }, 1000);
+      }
+      document.addEventListener('visibilitychange', scheduleTimeline);
+
+      // Zebar already converts the native timeline to seconds.
       function toSeconds(value) {
-        if (!value) return 0;
-
-        const asTicks = value / 1e7;
-
-        if (asTicks > 0 && asTicks < 86400) return asTicks;
-        return value / 1e3;
+        return Number.isFinite(value) ? Math.max(0, value) : 0;
       }
 
       function clock(seconds) {
@@ -127,6 +132,7 @@
       }
 
       function render() {
+        [el.toggle, el.previous, el.next].forEach(button => { button.disabled = !session; });
         if (!session) {
           el.title.textContent = 'Nothing playing';
           el.artist.textContent = 'Start something and it shows up here.';
@@ -149,6 +155,8 @@
 
       function useSession(next) {
         session = next;
+        clearTimeout(timelineTimer);
+        positionUpdatedAt = performance.now();
 
         if (!session) {
           render();
@@ -162,6 +170,7 @@
         positionSeconds = Math.max(0, toSeconds(session.position) - start);
         render();
         renderTimeline();
+        scheduleTimeline();
       }
 
       media.onOutput(output => {
@@ -169,21 +178,16 @@
       });
 
       media.onError(error => {
+        session = null;
+        clearTimeout(timelineTimer);
+        render();
         el.artist.textContent = 'Media provider error: ' + JSON.stringify(error);
       });
-
-      // The provider refreshes the position every few seconds, so advance the
-      // bar locally in between.
-      setInterval(() => {
-        if (session && session.isPlaying && positionSeconds < durationSeconds) {
-          positionSeconds += 1;
-          renderTimeline();
-        }
-      }, 1000);
 
       // Transport clicks run without closing the panel: a panel that vanishes
       // after one click is useless for skipping tracks.
       async function run(action) {
+        if (!session || !media.output) return;
         try {
           await action();
         } catch (error) {

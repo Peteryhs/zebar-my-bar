@@ -49,11 +49,33 @@
           <!-- Whatever application has the foreground, named the way a menu bar
                names it. Reported by the guard, which is watching the foreground
                window anyway. -->
-          <span class="app-name" data-el="app-name" hidden></span>
+          <span class="app-name clickable" data-panel="windows-menu" data-el="app-name" title="System menu" hidden></span>
 
           <div class="media clickable" data-panel="media-panel" hidden>
             <i class="nf" data-el="media-icon"></i>
             <span class="media-text" data-el="media-text"></span>
+          </div>
+          <button class="visualizer-toggle clickable" data-el="visualizer" type="button"
+            aria-label="Turn off playback visualizer" aria-pressed="false" hidden
+            title="Toggle playback visualizer (decorative animation)">
+            <span class="equalizer" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span>
+          </button>
+          <div class="dino-widget" data-el="dinosaur" hidden>
+            <button class="dino-start clickable" type="button" title="Pocket dinosaur: click to run">
+              <svg class="dino-portrait" viewBox="0 0 16 14" aria-hidden="true"></svg><span>Run</span>
+            </button>
+            <div class="dino-run" hidden>
+              <canvas class="dino-canvas" height="42" tabindex="0" role="application"
+                aria-label="Full-bar dinosaur. Space or click jumps. Hold Down, S, or right mouse to duck. P pauses, Escape leaves."></canvas>
+              <div class="dino-hud">
+                <span class="dino-score" aria-hidden="true">000</span>
+                <span class="dino-details">Lap 1</span>
+                <span class="dino-help">Space jump · ↓ duck · P pause · Esc leave</span>
+                <button class="dino-pause" type="button" title="Pause or resume game" aria-label="Pause game">Ⅱ</button>
+                <button class="dino-exit" type="button" title="Leave game" aria-label="Leave game">×</button>
+              </div>
+            </div>
+            <span class="sr-only dino-status" role="status" aria-live="polite"></span>
           </div>
         </div>
 
@@ -103,11 +125,51 @@
     <script type="module">
       import * as zebar from './assets/vendor/zebar.js';
       import { startWeather, weatherIcon } from './assets/weather.js';
+      import { anchoredPlacement } from './assets/placement.js';
+      import { onPreferences, setPreference } from './assets/preferences.js';
 
       const widget = zebar.currentWidget();
       const packDir = widget.htmlPath.replace(/[\\/][^\\/]*$/, '');
       const windowCtlScript = `${packDir}\\scripts\\window-ctl.ps1`;
       const brightnessScript = `${packDir}\\scripts\\brightness.ps1`;
+
+      /*
+       * The bar's console is not visible to anybody, and a guard that fails to
+       * start leaves no trace of its own: the failure looks exactly like a bar
+       * that never asked for one. This writes the reason into the same log the
+       * guard writes, through the shell path that already closes panels.
+       *
+       * Never awaited, and allowed to fail: a diagnostic that can break the bar
+       * is worse than the silence it replaces.
+       */
+      /*
+       * One line in %TEMP%\zebar-window-ctl.log when the guard could not be
+       * started. A guard that fails to start leaves no trace of its own - the
+       * window helper is the thing that writes the log - so the failure used to
+       * look exactly like a bar that never asked for one.
+       *
+       * Bypass is not optional here: this machine refuses unsigned scripts, and
+       * without it PowerShell exits before running a single line.
+       */
+      function guardDiag(message) {
+        try {
+          zebar.shellExec('powershell.exe', [
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            windowCtlScript,
+            '-Action',
+            'diag',
+            '-Match',
+            'diag',
+            '-Message',
+            String(message).replace(/["'\r\n]+/g, ' ').slice(0, 400),
+          ]).catch(() => {});
+        } catch (error) {
+          // Nothing to do: the log is a convenience, not a requirement.
+        }
+      }
 
       // Every element the script writes to, looked up once.
       const el = {};
@@ -117,8 +179,48 @@
 
       const tile = {};
       for (const node of document.querySelectorAll('[data-panel]')) {
-        tile[node.dataset.panel] = node;
+        tile[node.dataset.panel] ||= node;
+        node.setAttribute('role', 'button');
+        node.tabIndex = 0;
+        node.setAttribute('aria-haspopup', 'dialog');
+        node.setAttribute('aria-expanded', 'false');
       }
+
+      let visualizerEnabled = false;
+      let mediaPlaying = false;
+      let dinosaurEnabled = false;
+      let dinosaur = null;
+      let dinosaurLoading = null;
+      function updateVisualizer() {
+        show(el.visualizer, visualizerEnabled && mediaPlaying);
+        setClassToggle(el.visualizer, 'is-playing', mediaPlaying);
+      }
+      onPreferences(preferences => {
+        visualizerEnabled = preferences.visualizer;
+        el.visualizer.setAttribute('aria-pressed', String(visualizerEnabled));
+        document.body.classList.toggle('is-compact', preferences.compact);
+        for (const key of ['showAppName', 'showSystem', 'showStorage', 'showWeather']) {
+          document.body.classList.toggle('hide-' + key, !preferences[key]);
+        }
+        updateVisualizer();
+        dinosaurEnabled = preferences.dinosaur;
+        if (dinosaur) dinosaur.setEnabled(dinosaurEnabled);
+        else if (dinosaurEnabled && !dinosaurLoading) {
+          // No game code or animation loop until it is enabled in settings.
+          dinosaurLoading = import('./assets/dinosaur.js').then(({ mountDinosaur }) => {
+            dinosaur = mountDinosaur(el.dinosaur);
+            dinosaur.setEnabled(dinosaurEnabled);
+          }).catch(error => {
+            dinosaurLoading = null;
+            console.warn('Could not load Pocket dinosaur:', error);
+          });
+        }
+      });
+      el.visualizer.addEventListener('click', () => setPreference('visualizer', !visualizerEnabled));
+      document.addEventListener('visibilitychange', () => {
+        document.body.classList.toggle('is-hidden', document.hidden);
+      });
+      document.body.classList.toggle('is-hidden', document.hidden);
 
       function setText(node, text) {
         if (!node) return;
@@ -157,17 +259,33 @@
 
       const providers = zebar.createProviderGroup({
         cpu: { type: 'cpu' },
-        date: { type: 'date', formatting: 'EEE d MMM t' },
-        battery: { type: 'battery' },
+        battery: { type: 'battery', refreshInterval: 30000 },
         memory: { type: 'memory' },
         media: { type: 'media' },
         audio: { type: 'audio' },
         disk: { type: 'disk', refreshInterval: 60000 },
       });
 
+      // The clock has minute precision. Update it at the minute boundary rather
+      // than waking the whole provider group (and every tile) once per second.
+      const clockFormat = new Intl.DateTimeFormat(undefined, {
+        weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+      });
+      let clockTimer;
+      function updateClock() {
+        clearTimeout(clockTimer);
+        const now = new Date();
+        setText(el.clock, clockFormat.format(now));
+        setTitle(el.clock, now.toLocaleDateString(undefined, { dateStyle: 'full' }) + ' · Calendar');
+        if (!document.hidden) clockTimer = setTimeout(updateClock, 60000 - (Date.now() % 60000) + 20);
+      }
+      document.addEventListener('visibilitychange', updateClock);
+      updateClock();
+
       // Remembered while nothing is playing, so the tile still shows the last
       // thing that played instead of disappearing.
       let lastTrack = null;
+      let isDraggingControl = false;
 
       // The battery provider is the one reading that blips. A failed driver
       // refresh is emitted as an error, zebar sets that provider's output to
@@ -180,7 +298,18 @@
       let batteryRestartTimer = null;
       let batteryRetries = 0;
 
-      const BATTERY_RESTART_AFTER_MS = 120000;
+      /*
+       * Battery state comes from WMI, and zebar refreshes it on the interval it
+       * is given. Asking for it every couple of seconds was enough to make the
+       * refresh fail on this machine: the provider then emits an error on every
+       * tick, the tile keeps its last number, and it dims because nothing fresh
+       * has arrived. Thirty seconds is still current for a battery, and three
+       * missed polls is the point at which the number really is old.
+       */
+      const BATTERY_STALE_AFTER_MS = 90000;
+      const BATTERY_RETRY_BASE_MS = 60000;
+      const BATTERY_RETRY_MAX_MS = 300000;
+      let lastBatteryAt = 0;
 
       function batteryIcon(percent) {
         if (percent > 90) return 'nf-fa-battery_4';
@@ -210,12 +339,12 @@
       function render() {
         const out = providers.outputMap;
 
-        setText(el.clock, out.date?.formatted);
-
         // Media: the current session, or the last one we saw.
         const session = out.media?.currentSession || null;
         if (session) lastTrack = session;
         const track = session || lastTrack;
+        mediaPlaying = Boolean(session?.isPlaying);
+        updateVisualizer();
 
         show(tile['media-panel'], Boolean(track));
 
@@ -286,16 +415,12 @@
         // so fall back to the last good one instead of hiding the tile.
         if (out.battery && Number.isFinite(out.battery.chargePercent)) {
           lastBattery = out.battery;
-          batteryRetries = 0;
 
-          if (batteryRestartTimer) {
-            clearTimeout(batteryRestartTimer);
-            batteryRestartTimer = null;
-          }
         }
 
         const battery = lastBattery;
-        const live = Boolean(out.battery && Number.isFinite(out.battery.chargePercent));
+        const live = Boolean(out.battery && Number.isFinite(out.battery.chargePercent))
+          && Date.now() - lastBatteryAt < BATTERY_STALE_AFTER_MS;
 
         show(tile['battery-panel'], Boolean(battery));
         setClassToggle(tile['battery-panel'], 'stale', Boolean(battery) && !live);
@@ -323,36 +448,55 @@
       }
 
       providers.onOutput(render);
+      providers.raw.media.onError(render);
       render();
 
-      /*
-       * An error only reaches onError listeners; render() is not called for it,
-       * so a failed read leaves the bar sitting on the last number with no sign
-       * of trouble. A provider whose very first read failed stops emitting for
-       * good, and a restart is the only way back short of reloading the bar, so
-       * restart one that has stayed quiet, then re-arm (capped so a machine with
-       * no battery cannot restart it forever).
-       */
+      // Only battery events prove freshness; other providers may keep rendering
+      // the same non-null battery object after its reader stalls.
+      //
+      // A stalled reader does not come back on its own: the provider keeps
+      // emitting the same error until it is recreated. Retry on a widening
+      // delay and never stop, because a fixed number of attempts is what used
+      // to leave the tile dimmed for good after a failed stretch - a resume
+      // from sleep, or the reader dying once, was enough. Nothing is retried
+      // while readings are arriving; every good one resets the delay.
       function armBatteryRestart() {
-        if (batteryRestartTimer || !lastBattery || batteryRetries >= 5) return;
-
-        batteryRestartTimer = setTimeout(() => {
+        if (batteryRestartTimer) return;
+        const delay = Math.min(
+          BATTERY_RETRY_MAX_MS,
+          BATTERY_RETRY_BASE_MS * 2 ** batteryRetries,
+        );
+        batteryRestartTimer = setTimeout(async () => {
           batteryRestartTimer = null;
-
-          if (providers.outputMap.battery) return;
-
           batteryRetries += 1;
-          providers.raw.battery.restart();
-          armBatteryRestart();
-        }, BATTERY_RESTART_AFTER_MS);
+          render();
+          try {
+            await providers.raw.battery.restart();
+          } catch (error) {
+            // A restart that fails still leaves the next attempt armed: the
+            // reader stays dead only if nothing ever tries again.
+            console.warn('Battery reader restart failed', error);
+          } finally {
+            armBatteryRestart();
+          }
+        }, delay);
       }
 
+      providers.raw.battery.onOutput(output => {
+        if (!output || !Number.isFinite(output.chargePercent)) return;
+        lastBatteryAt = Date.now();
+        batteryRetries = 0;
+        clearTimeout(batteryRestartTimer);
+        batteryRestartTimer = null;
+        armBatteryRestart();
+        render();
+      });
       providers.raw.battery.onError(() => {
-        // Re-render on the error itself: nothing else draws until some other
-        // provider ticks, and the dim is what tells him the number is old.
         render();
         armBatteryRestart();
       });
+      // Recover even when the first read fails or no event arrives at all.
+      armBatteryRestart();
 
       /*
        * Weather does not come from a zebar provider: that one geolocates through
@@ -385,7 +529,6 @@
        * Quick controls (volume & brightness drag/wheel)
        * ------------------------------------------------------------------ */
 
-      let isDraggingControl = false;
       let controlDragStartX = 0;
       let controlDragStartVal = 0;
       let controlDragMode = 'volume'; // 'volume' | 'brightness'
@@ -687,11 +830,43 @@
         'storage-panel',
         'windows-menu',
         'weather-panel',
+        'settings-panel',
       ];
 
       const panels = new Map(
-        PANEL_NAMES.map(name => [name, { open: false, closedAt: 0 }]),
+        PANEL_NAMES.map(name => [name, { open: false, opening: false, closedAt: 0 }]),
       );
+
+      function updatePanelStates() {
+        for (const node of document.querySelectorAll('[data-panel]')) {
+          const state = panels.get(node.dataset.panel);
+          node.setAttribute('aria-expanded', String(Boolean(state?.open)));
+          node.setAttribute('aria-busy', String(Boolean(state?.opening)));
+        }
+      }
+
+      // Fetch dimensions once, on demand. Position is read only when opening a
+      // popup, so window/display changes do not need a polling loop.
+      let packConfig;
+      async function placementFor(name, node) {
+        packConfig ||= fetch('./zpack.json').then(response => {
+          if (!response.ok) throw new Error('Could not read panel dimensions');
+          return response.json();
+        }).catch(error => { packConfig = null; throw error; });
+        const [{ currentMonitor }, config, barPosition] = await Promise.all([
+          import('./assets/vendor/tauri-window.js'), packConfig, widget.tauriWindow.outerPosition(),
+        ]);
+        const monitor = await currentMonitor();
+        if (!monitor?.name) throw new Error('Display information unavailable');
+        const preset = config.widgets.find(entry => entry.name === name)?.presets[0];
+        if (!preset) throw new Error('Panel dimensions unavailable');
+        return anchoredPlacement({
+          rect: node.getBoundingClientRect(), barPosition, monitor,
+          barBottom: document.getElementById('root').getBoundingClientRect().bottom,
+          width: parseFloat(preset.width), height: parseFloat(preset.height),
+          align: name === 'windows-menu' || name === 'media-panel' ? 'start' : 'center',
+        });
+      }
 
       /*
        * How long a panel counts as "just closed".
@@ -708,22 +883,22 @@
       const JUST_CLOSED_MS = 350;
 
       /*
-       * Which monitor this bar is on. Decides the preset a panel opens with, and
-       * names the guard, so two bars do not retire each other's panels.
+       * Which monitor this bar is on. Names the guard so reloading this bar
+       * retires its old helper. Popup placement is resolved separately on click.
        *
        * Bounded, and never awaited by anything that has to happen: an await on
        * this that never came back is what stopped the guard from starting at all.
        */
       const monitorInfo = (async () => {
-        const info = { preset: 'primary', owner: 'default' };
+        const info = { owner: 'default' };
 
         try {
-          const { currentMonitor, primaryMonitor } = await import(
+          const { currentMonitor } = await import(
             './assets/vendor/tauri-window.js'
           );
 
-          const [current, primary] = await Promise.race([
-            Promise.all([currentMonitor(), primaryMonitor()]),
+          const current = await Promise.race([
+            currentMonitor(),
             new Promise((resolve, reject) =>
               setTimeout(() => reject(new Error('timed out')), 2000),
             ),
@@ -731,25 +906,12 @@
 
           if (current) info.owner = `m${current.position.x}x${current.position.y}`;
 
-          if (
-            current &&
-            primary &&
-            (current.position.x !== primary.position.x ||
-              current.position.y !== primary.position.y)
-          ) {
-            info.preset = 'secondary';
-          }
         } catch (err) {
-          console.warn('Monitor lookup failed, using the primary preset.', err);
+          console.warn('Monitor lookup failed, using the default guard owner.', err);
         }
 
         return info;
       })();
-
-      let panelPreset = 'primary';
-      monitorInfo.then(info => {
-        panelPreset = info.preset;
-      });
 
       /*
        * One long lived helper watches every panel window and closes it as soon as
@@ -764,15 +926,28 @@
        */
       let panelGuard = null;
       let guardStarting = null;
+      let guardStartedAt = 0;
+      let guardRetryTimer = null;
+      let shuttingDown = false;
+      window.addEventListener('beforeunload', () => {
+        shuttingDown = true;
+        clearTimeout(guardRetryTimer);
+        panelGuard?.kill();
+      }, { once: true });
 
       function startPanelGuard() {
+        if (shuttingDown) return;
         if (guardStarting) return guardStarting;
+
+        guardStartedAt = Date.now();
 
         guardStarting = (async () => {
           const { owner } = await monitorInfo;
 
           const guard = await zebar.shellSpawn('powershell.exe', [
             '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
             '-File',
             windowCtlScript,
             '-Action',
@@ -781,6 +956,8 @@
             PANEL_NAMES.join(','),
             '-Owner',
             owner,
+            '-BarTitle',
+            `Zebar - ${widget.packId} / ${widget.name}`,
           ]);
 
           guard.onStdout(line => {
@@ -811,6 +988,7 @@
               state.open = false;
               state.closedAt = Date.now();
             }
+            updatePanelStates();
           });
 
           guard.onStderr(line => console.warn('panel guard:', line));
@@ -818,9 +996,11 @@
           guard.onExit(() => {
             panelGuard = null;
             guardStarting = null;
+            guardDiag('guard exited');
             panels.forEach(state => {
               state.open = false;
             });
+            updatePanelStates();
 
             // The bar's own state came from the guard, so it is no longer known.
             document.body.classList.remove('is-floating');
@@ -828,16 +1008,15 @@
 
             // The guard is the only thing that dismisses a panel, so it does not
             // get to stay dead. It also exits on a lifetime cap by design.
-            setTimeout(startPanelGuard, 1000);
+            if (!shuttingDown) guardRetryTimer = setTimeout(startPanelGuard, 1000);
           });
-
-          window.addEventListener('beforeunload', () => guard.kill());
 
           panelGuard = guard;
         })().catch(err => {
           console.warn('Panel guard failed to start:', err);
+          guardDiag('guard start failed: ' + ((err && err.message) || err));
           guardStarting = null;
-          setTimeout(startPanelGuard, 5000);
+          if (!shuttingDown) guardRetryTimer = setTimeout(startPanelGuard, 5000);
         });
 
         return guardStarting;
@@ -852,9 +1031,11 @@
        * and the guard never sees a line.
        */
       function closeWidget(name) {
-        zebar
+        return zebar
           .shellExec('powershell.exe', [
             '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
             '-File',
             windowCtlScript,
             '-Action',
@@ -872,40 +1053,114 @@
        * one for two reasons at once: the click was outside it, and it retires the
        * previous panel whenever a new one appears.
        */
-      async function togglePanel(name) {
+      let panelRequest = 0;
+      let panelQueue = Promise.resolve();
+      async function togglePanel(name, node) {
         const state = panels.get(name);
         const justClosed = Date.now() - state.closedAt < JUST_CLOSED_MS;
+
+        if (state.opening) {
+          panelRequest += 1;
+          state.open = false;
+          updatePanelStates();
+          return;
+        }
 
         if (state.open || justClosed) {
           if (state.open) {
             state.open = false;
             state.closedAt = Date.now();
             closeWidget(name);
+            updatePanelStates();
           }
 
           return;
         }
 
+        const request = ++panelRequest;
+        state.opening = true;
         state.open = true;
-
-        await zebar
-          .startWidgetPreset(name, panelPreset, { packId: widget.packId })
-          .catch(err => {
+        updatePanelStates();
+        panelQueue = panelQueue.then(async () => {
+          try {
+            if (request !== panelRequest) return;
+            const placement = await placementFor(name, node);
+            if (request !== panelRequest) return;
+            await zebar.startWidget(name, placement, { packId: widget.packId });
+            if (request !== panelRequest) await closeWidget(name);
+          } catch (err) {
             state.open = false;
+            node.title = 'Could not open this panel. Click to retry.';
             console.warn('Could not open panel:', err);
-          });
-      }
-
-      for (const [name, node] of Object.entries(tile)) {
-        node.addEventListener('click', () => {
-          if (name === 'controls-panel' && suppressControlsClick) return;
-          togglePanel(name);
+          } finally {
+            state.opening = false;
+            if (request !== panelRequest) state.open = false;
+            updatePanelStates();
+          }
         });
       }
 
+      for (const node of document.querySelectorAll('[data-panel]')) {
+        const name = node.dataset.panel;
+        node.addEventListener('click', () => {
+          if (name === 'controls-panel' && suppressControlsClick) return;
+          togglePanel(name, node);
+        });
+        node.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            togglePanel(name, node);
+          }
+        });
+      }
+
+      document.querySelector('.app').addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          panelRequest += 1;
+          panels.forEach((state, name) => {
+            if (state.open && !state.opening) closeWidget(name);
+            state.open = false;
+          });
+          updatePanelStates();
+        }
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        const controls = [...document.querySelectorAll('.app [tabindex="0"], .app button')]
+          .filter(node => node.getClientRects().length);
+        const current = controls.indexOf(document.activeElement);
+        if (current < 0) return;
+        event.preventDefault();
+        const index = event.key === 'Home' ? 0 : event.key === 'End' ? controls.length - 1
+          : (current + (event.key === 'ArrowRight' ? 1 : -1) + controls.length) % controls.length;
+        controls[index]?.focus();
+      });
+
+      // Started now rather than on the first click, so the first panel is watched
+      // from the moment it appears.
       // Started now rather than on the first click, so the first panel is watched
       // from the moment it appears.
       startPanelGuard();
+
+      /*
+       * The guard is the only thing that dismisses a panel, so it must not be
+       * possible to end up with none. Its own exit reports back here and arms a
+       * retry, and a failed start retries on its own; this covers the case those
+       * do not: a page rebuilt under the guard, a report that never arrives, or a
+       * start that never settles. A dead guard used to leave every panel it had
+       * been watching unable to close.
+       */
+      const GUARD_START_TIMEOUT_MS = 20000;
+      setInterval(() => {
+        if (shuttingDown || panelGuard) return;
+
+        const stalled = guardStarting &&
+          Date.now() - guardStartedAt > GUARD_START_TIMEOUT_MS;
+
+        if (guardStarting && !stalled) return;
+
+        if (stalled) console.warn('Panel guard did not start in time; retrying.');
+        guardStarting = null;
+        startPanelGuard();
+      }, 15000);
     </script>
   </body>
 </html>

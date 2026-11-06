@@ -57,9 +57,12 @@
 
 
 
+      // Same config as the bar, so both windows share one reader: polling WMI
+      // every couple of seconds is what made the refresh start failing, and the
+      // tile then dimmed with the last number it had.
       const battery = zebar.createProvider({
         type: 'battery',
-        refreshInterval: 2000,
+        refreshInterval: 30000,
       });
 
       const el = {

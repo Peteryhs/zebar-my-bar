@@ -21,6 +21,7 @@
       "resizable": false,
       "transparent": true,
       "includeFiles": [
+        "zpack.json",
         "*.html",
         "*.css",
         "assets/*",
@@ -154,7 +155,7 @@
           },
           {
             "program": "powershell.exe",
-            "argsRegex": "-NoProfile -File .*\\\\power\\.ps1 (sleep|lock|signout|shutdown|restart)"
+            "argsRegex": "-NoProfile( -ExecutionPolicy Bypass)? -File .*\\\\power\\.ps1 (sleep|lock|signout|shutdown|restart)"
           }
         ]
       },
@@ -165,7 +166,7 @@
           "offsetX": "8px",
           "offsetY": "48px",
           "width": "250px",
-          "height": "344px",
+          "height": "600px",
           "monitorSelection": {
             "type": "primary"
           },
@@ -181,7 +182,7 @@
           "offsetX": "8px",
           "offsetY": "48px",
           "width": "250px",
-          "height": "344px",
+          "height": "600px",
           "monitorSelection": {
             "type": "secondary"
           },
@@ -348,9 +349,9 @@
           "offsetX": "74px",
           "offsetY": "48px",
           "width": "320px",
-          "height": "186px",
+          "height": "260px",
           "monitorSelection": {
-            "type": "all"
+            "type": "primary"
           },
           "dockToEdge": {
             "enabled": false,
@@ -364,9 +365,9 @@
           "offsetX": "74px",
           "offsetY": "48px",
           "width": "320px",
-          "height": "186px",
+          "height": "260px",
           "monitorSelection": {
-            "type": "all"
+            "type": "secondary"
           },
           "dockToEdge": {
             "enabled": false,
@@ -411,9 +412,9 @@
           "offsetX": "-8px",
           "offsetY": "48px",
           "width": "340px",
-          "height": "156px",
+          "height": "280px",
           "monitorSelection": {
-            "type": "all"
+            "type": "primary"
           },
           "dockToEdge": {
             "enabled": false,
@@ -427,9 +428,9 @@
           "offsetX": "-8px",
           "offsetY": "48px",
           "width": "340px",
-          "height": "156px",
+          "height": "280px",
           "monitorSelection": {
-            "type": "all"
+            "type": "secondary"
           },
           "dockToEdge": {
             "enabled": false,
@@ -471,7 +472,7 @@
           "width": "340px",
           "height": "104px",
           "monitorSelection": {
-            "type": "all"
+            "type": "primary"
           },
           "dockToEdge": {
             "enabled": false,
@@ -487,7 +488,7 @@
           "width": "340px",
           "height": "104px",
           "monitorSelection": {
-            "type": "all"
+            "type": "secondary"
           },
           "dockToEdge": {
             "enabled": false,
@@ -621,6 +622,64 @@
           "offsetY": "48px",
           "width": "640px",
           "height": "380px",
+          "monitorSelection": {
+            "type": "secondary"
+          },
+          "dockToEdge": {
+            "enabled": false,
+            "edge": null,
+            "windowMargin": "0px"
+          }
+        }
+      ]
+    },
+    {
+      "name": "settings-panel",
+      "htmlPath": "./settings-panel.html",
+      "zOrder": "top_most",
+      "shownInTaskbar": false,
+      "focused": true,
+      "resizable": false,
+      "transparent": true,
+      "includeFiles": [
+        "*.html",
+        "*.css",
+        "assets/*",
+        "*.woff2",
+        "assets/**",
+        "scripts/*"
+      ],
+      "caching": {
+        "defaultDuration": 604800,
+        "rules": []
+      },
+      "privileges": {
+        "shellCommands": []
+      },
+      "presets": [
+        {
+          "name": "primary",
+          "anchor": "top_left",
+          "offsetX": "8px",
+          "offsetY": "50px",
+          "width": "400px",
+          "height": "740px",
+          "monitorSelection": {
+            "type": "primary"
+          },
+          "dockToEdge": {
+            "enabled": false,
+            "edge": null,
+            "windowMargin": "0px"
+          }
+        },
+        {
+          "name": "secondary",
+          "anchor": "top_left",
+          "offsetX": "8px",
+          "offsetY": "50px",
+          "width": "400px",
+          "height": "740px",
           "monitorSelection": {
             "type": "secondary"
           },

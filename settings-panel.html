@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bar settings</title>
+    <link rel="preload" href="./assets/nerdfont.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="modulepreload" href="./assets/vendor/zebar.js" />
+  </head>
+  <body class="panel-body">
+    <div class="panel settings-panel">
+      <div class="panel-header">
+        <i class="nf nf-md-tune_variant" aria-hidden="true"></i>
+        <span class="panel-title">Bar settings</span>
+        <button class="panel-close" id="close" type="button" title="Close settings">×</button>
+      </div>
+      <p class="settings-intro">Make a little room for what you like.</p>
+
+      <section class="settings-section" aria-labelledby="layout-heading">
+        <h2 id="layout-heading">Layout</h2>
+        <button class="preference-row" type="button" role="switch" aria-checked="false" data-preference="compact" aria-describedby="compact-note">
+          <span>Compact spacing</span><span class="switch-track" aria-hidden="true"></span>
+        </button>
+        <p class="setting-note" id="compact-note">Tighter spacing and slightly smaller readings.</p>
+        <button class="preference-row" type="button" role="switch" aria-checked="true" data-preference="showAppName">
+          <span>App name</span><span class="switch-track" aria-hidden="true"></span>
+        </button>
+        <button class="preference-row" type="button" role="switch" aria-checked="true" data-preference="showSystem">
+          <span>CPU and memory</span><span class="switch-track" aria-hidden="true"></span>
+        </button>
+        <button class="preference-row" type="button" role="switch" aria-checked="true" data-preference="showStorage">
+          <span>Free storage</span><span class="switch-track" aria-hidden="true"></span>
+        </button>
+        <button class="preference-row" type="button" role="switch" aria-checked="true" data-preference="showWeather">
+          <span>Weather</span><span class="switch-track" aria-hidden="true"></span>
+        </button>
+      </section>
+
+      <section class="settings-section" aria-labelledby="play-heading">
+        <h2 id="play-heading">A little play</h2>
+        <button class="preference-row" type="button" role="switch" aria-checked="false" data-preference="visualizer" aria-describedby="visualizer-note">
+          <span>Playback visualizer</span><span class="switch-track" aria-hidden="true"></span>
+        </button>
+        <p class="setting-note" id="visualizer-note">A tiny equalizer. Appears only while media is playing.</p>
+        <button class="preference-row" type="button" role="switch" aria-checked="false" data-preference="dinosaur" aria-describedby="dino-note">
+          <span>Pocket dinosaur</span><span class="switch-track" aria-hidden="true"></span>
+        </button>
+        <p class="setting-note" id="dino-note">Run across the whole bar. Cacti, birds, gaps, and a few familiar landmarks.</p>
+        <div class="settings-game-guide">
+          <span><kbd>Space</kbd> or click to jump</span>
+          <span>Hold <kbd>↓</kbd>, <kbd>S</kbd>, or right mouse to duck</span>
+          <span><kbd>P</kbd> pause <kbd>Esc</kbd> leave</span>
+          <span>Clock: checkpoint + slow time. Battery: shield. Music: notes.</span>
+          <span>Faster each lap. Pauses when you look away.</span>
+        </div>
+      </section>
+      <p class="settings-footer" role="status">Changes save automatically on all your bars.</p>
+    </div>
+    <script type="module">
+      import * as zebar from './assets/vendor/zebar.js';
+      import { fitWindowToCard } from './assets/panel.js';
+      import { bindPreferenceControls } from './assets/preferences.js';
+
+      const widget = zebar.currentWidget();
+      bindPreferenceControls();
+      fitWindowToCard(widget);
+      const close = () => widget.close();
+      document.getElementById('close').addEventListener('click', close);
+      window.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+    </script>
+  </body>
+</html>
